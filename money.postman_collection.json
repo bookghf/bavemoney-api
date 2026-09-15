@@ -1,0 +1,182 @@
+{
+  "info": {
+    "name": "Money Ledger API",
+    "description": "Complete API for money ledger application",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"email\": \"user@example.com\", \"password\": \"<password>\", \"display_name\": \"Jane Doe\", \"default_currency\": \"USD\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\"email\": \"user@example.com\", \"password\": \"<password>\"}"},
+            "url": {"raw": "{{base_url}}/api/v1/auth/login", "host": ["{{base_url}}"], "path": ["api", "v1", "auth", "login"]}
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}],
+            "body": {"mode": "raw", "raw": "{\"refresh_token\": \"{{refresh_token}}\"}"},
+            "url": {"raw": "{{base_url}}/api/v1/auth/refresh", "host": ["{{base_url}}"], "path": ["api", "v1", "auth", "refresh"]}
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}],
+            "body": {"mode": "raw", "raw": "{\"refresh_token\": \"{{refresh_token}}\"}"},
+            "url": {"raw": "{{base_url}}/api/v1/auth/logout", "host": ["{{base_url}}"], "path": ["api", "v1", "auth", "logout"]}
+          }
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "item": [
+        {"name": "List Accounts", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/accounts", "host": ["{{base_url}}"], "path": ["api", "v1", "accounts"]}}},
+        {"name": "Create Account", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Main Wallet\", \"type\": \"e_wallet\", \"currency\": \"THB\", \"initial_balance\": \"1000.00\"}"}, "url": {"raw": "{{base_url}}/api/v1/accounts", "host": ["{{base_url}}"], "path": ["api", "v1", "accounts"]}}},
+        {"name": "Get Account", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/accounts/{{account_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "accounts", "{{account_id}}"]}}},
+        {"name": "Update Account", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Petty Cash\", \"is_archived\": false}"}, "url": {"raw": "{{base_url}}/api/v1/accounts/{{account_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "accounts", "{{account_id}}"]}}},
+        {"name": "Delete Account", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/accounts/{{account_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "accounts", "{{account_id}}"]}}}
+      ]
+    },
+    {
+      "name": "Transactions",
+      "item": [
+        {"name": "List Transactions", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/transactions?page=1&limit=20", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions"], "query": [{"key": "page", "value": "1"}, {"key": "limit", "value": "20"}]}}},
+        {"name": "Create Transaction", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"account_id\": \"{{account_id}}\", \"type\": \"expense\", \"amount\": \"350.00\", \"currency\": \"THB\", \"note\": \"Groceries\", \"tags\": [\"essentials\"], \"occurred_at\": \"2026-08-15T10:45:00Z\"}"}, "url": {"raw": "{{base_url}}/api/v1/transactions", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions"]}}},
+        {"name": "Get Transaction", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}"]}}},
+        {"name": "Update Transaction", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"amount\": \"400.00\", \"note\": \"Groceries updated\"}"}, "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}"]}}},
+        {"name": "Delete Transaction", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}"]}}}
+      ]
+    },
+    {
+      "name": "Categories",
+      "item": [
+        {"name": "List Categories", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/categories", "host": ["{{base_url}}"], "path": ["api", "v1", "categories"]}}},
+        {"name": "Create Category", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Bubble Tea\", \"type\": \"expense\", \"icon\": \"cup\", \"color\": \"#E88D67\"}"}, "url": {"raw": "{{base_url}}/api/v1/categories", "host": ["{{base_url}}"], "path": ["api", "v1", "categories"]}}},
+        {"name": "Get Category", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/categories/{{category_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "categories", "{{category_id}}"]}}},
+        {"name": "Update Category", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Bubble Tea Updated\", \"color\": \"#FF6B35\"}"}, "url": {"raw": "{{base_url}}/api/v1/categories/{{category_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "categories", "{{category_id}}"]}}},
+        {"name": "Delete Category", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/categories/{{category_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "categories", "{{category_id}}"]}}}
+      ]
+    },
+    {
+      "name": "Budgets",
+      "item": [
+        {"name": "List Budgets", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/budgets", "host": ["{{base_url}}"], "path": ["api", "v1", "budgets"]}}},
+        {"name": "Create Budget", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"category_id\": \"{{category_id}}\", \"amount\": \"8000.00\", \"currency\": \"THB\", \"period\": \"monthly\", \"start_date\": \"2026-08-01\", \"alert_threshold_pct\": 80}"}, "url": {"raw": "{{base_url}}/api/v1/budgets", "host": ["{{base_url}}"], "path": ["api", "v1", "budgets"]}}},
+        {"name": "Get Budget", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "budgets", "{{budget_id}}"]}}},
+        {"name": "Update Budget", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"amount\": \"10000.00\", \"alert_threshold_pct\": 90}"}, "url": {"raw": "{{base_url}}/api/v1/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "budgets", "{{budget_id}}"]}}},
+        {"name": "Delete Budget", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/budgets/{{budget_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "budgets", "{{budget_id}}"]}}}
+      ]
+    },
+    {
+      "name": "Reports",
+      "item": [
+        {"name": "Get Summary Report", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/reports/summary?period=month&date=2026-08&currency=THB", "host": ["{{base_url}}"], "path": ["api", "v1", "reports", "summary"], "query": [{"key": "period", "value": "month"}, {"key": "date", "value": "2026-08"}, {"key": "currency", "value": "THB"}]}}}
+      ]
+    },
+    {
+      "name": "Attachments",
+      "item": [
+        {"name": "Request Presigned URL", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"filename\": \"receipt.jpg\", \"content_type\": \"image/jpeg\", \"file_size_bytes\": 245120}"}, "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}/attachment", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}", "attachment"]}}},
+        {"name": "Confirm Upload", "request": {"method": "POST", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}/attachment/{{attachment_id}}/confirm", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}", "attachment", "{{attachment_id}}", "confirm"]}}},
+        {"name": "Delete Attachment", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/transactions/{{transaction_id}}/attachment/{{attachment_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "transactions", "{{transaction_id}}", "attachment", "{{attachment_id}}"]}}}
+      ]
+    },
+    {
+      "name": "Device Tokens",
+      "item": [
+        {"name": "Register Device Token", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{access_token}}"}], "body": {"mode": "raw", "raw": "{\"fcm_token\": \"token_here\", \"platform\": \"ios\"}"}, "url": {"raw": "{{base_url}}/api/v1/device-tokens", "host": ["{{base_url}}"], "path": ["api", "v1", "device-tokens"]}}},
+        {"name": "Delete Device Token", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/device-tokens/{{fcm_token}}", "host": ["{{base_url}}"], "path": ["api", "v1", "device-tokens", "{{fcm_token}}"]}}}
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Auth",
+          "item": [
+            {"name": "Admin Login", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}], "body": {"mode": "raw", "raw": "{\"email\": \"admin@ledgerapp.com\", \"password\": \"<admin-password>\"}"}, "url": {"raw": "{{base_url}}/api/v1/admin/auth/login", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "auth", "login"]}}}
+          ]
+        },
+        {
+          "name": "Users",
+          "item": [
+            {"name": "List Users", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/users?page=1&limit=20", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "users"], "query": [{"key": "page", "value": "1"}, {"key": "limit", "value": "20"}]}}},
+            {"name": "Get User Details", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/users/{{user_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "users", "{{user_id}}"]}}},
+            {"name": "Suspend User", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"status\": \"suspended\", \"reason\": \"Terms of service violation\"}"}, "url": {"raw": "{{base_url}}/api/v1/admin/users/{{user_id}}/suspend", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "users", "{{user_id}}", "suspend"]}}}
+          ]
+        },
+        {
+          "name": "Categories",
+          "item": [
+            {"name": "List System Categories", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/categories", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "categories"]}}},
+            {"name": "Create System Category", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Healthcare\", \"type\": \"expense\", \"icon\": \"heart-pulse\", \"color\": \"#E63946\"}"}, "url": {"raw": "{{base_url}}/api/v1/admin/categories", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "categories"]}}},
+            {"name": "Update System Category", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"name\": \"Health & Medical\", \"icon\": \"stethoscope\"}"}, "url": {"raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "categories", "{{category_id}}"]}}},
+            {"name": "Delete System Category", "request": {"method": "DELETE", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/categories/{{category_id}}", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "categories", "{{category_id}}"]}}}
+          ]
+        },
+        {
+          "name": "Currencies",
+          "item": [
+            {"name": "List Currencies", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/currencies", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "currencies"]}}},
+            {"name": "Create Currency", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"code\": \"JPY\", \"name\": \"Japanese Yen\", \"symbol\": \"¥\", \"is_active\": true}"}, "url": {"raw": "{{base_url}}/api/v1/admin/currencies", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "currencies"]}}},
+            {"name": "Update Currency", "request": {"method": "PATCH", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"is_active\": false}"}, "url": {"raw": "{{base_url}}/api/v1/admin/currencies/{{currency_code}}", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "currencies", "{{currency_code}}"]}}}
+          ]
+        },
+        {
+          "name": "Exchange Rates",
+          "item": [
+            {"name": "List Exchange Rates", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/exchange-rates?page=1&limit=50", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "exchange-rates"], "query": [{"key": "page", "value": "1"}, {"key": "limit", "value": "50"}]}}},
+            {"name": "Create Exchange Rate", "request": {"method": "POST", "header": [{"key": "Content-Type", "value": "application/json"}, {"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "body": {"mode": "raw", "raw": "{\"base_currency\": \"USD\", \"target_currency\": \"THB\", \"rate\": \"34.85\", \"effective_date\": \"2026-08-15\"}"}, "url": {"raw": "{{base_url}}/api/v1/admin/exchange-rates", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "exchange-rates"]}}}
+          ]
+        },
+        {
+          "name": "Analytics",
+          "item": [
+            {"name": "Platform Overview", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/analytics/overview", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "analytics", "overview"]}}},
+            {"name": "Activity Over Time", "request": {"method": "GET", "header": [{"key": "Authorization", "value": "Bearer {{admin_access_token}}"}], "url": {"raw": "{{base_url}}/api/v1/admin/analytics/activity?period=daily", "host": ["{{base_url}}"], "path": ["api", "v1", "admin", "analytics", "activity"], "query": [{"key": "period", "value": "daily"}]}}}
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {"key": "base_url", "value": "http://localhost:8080", "type": "string"},
+    {"key": "access_token", "value": "", "type": "string"},
+    {"key": "refresh_token", "value": "", "type": "string"},
+    {"key": "admin_access_token", "value": "", "type": "string"},
+    {"key": "account_id", "value": "", "type": "string"},
+    {"key": "transaction_id", "value": "", "type": "string"},
+    {"key": "category_id", "value": "", "type": "string"},
+    {"key": "budget_id", "value": "", "type": "string"},
+    {"key": "attachment_id", "value": "", "type": "string"},
+    {"key": "fcm_token", "value": "", "type": "string"},
+    {"key": "user_id", "value": "", "type": "string"},
+    {"key": "currency_code", "value": "USD", "type": "string"}
+  ]
+}
