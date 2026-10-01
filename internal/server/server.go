@@ -42,7 +42,13 @@ func New(cfg config.Config, db *sql.DB) *http.Server {
 
 // credentialPaths are rate limited per client to slow down password guessing.
 // Token refresh is left out: it presents an unguessable token, not a password.
-var credentialPaths = []string{"/api/v1/auth/login", "/api/v1/auth/register", "/api/v1/admin/auth/login"}
+var credentialPaths = []string{
+	"/api/v1/auth/login",
+	"/api/v1/auth/register",
+	"/api/v1/admin/auth/login",
+	"/api/v1/me/password",
+	"/api/v1/me/reset",
+}
 
 // Router builds the API router.
 func Router(cfg config.Config, db *sql.DB) http.Handler {

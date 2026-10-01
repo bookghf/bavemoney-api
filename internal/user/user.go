@@ -40,3 +40,29 @@ type AuthResponse struct {
 	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`
 	User                  User   `json:"user"`
 }
+
+// UpdateProfileRequest is the PATCH /me payload; nil fields are left alone.
+// Email is not editable here: changing it needs a verification step.
+type UpdateProfileRequest struct {
+	DisplayName     *string `json:"display_name"`
+	DefaultCurrency *string `json:"default_currency"`
+}
+
+// ChangePasswordRequest is the POST /me/password payload.
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+// ResetRequest is the POST /me/reset payload: the password confirms intent.
+type ResetRequest struct {
+	Password string `json:"password"`
+}
+
+// ResetCounts reports how much ledger data a reset removed.
+type ResetCounts struct {
+	Transactions int64 `json:"transactions"`
+	Accounts     int64 `json:"accounts"`
+	Budgets      int64 `json:"budgets"`
+	Categories   int64 `json:"categories"`
+}

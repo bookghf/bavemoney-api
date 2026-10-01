@@ -42,6 +42,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", h.login)
 	mux.HandleFunc("/api/v1/auth/refresh", h.refreshToken)
 	mux.HandleFunc("/api/v1/auth/logout", h.logout)
+	mux.HandleFunc("/api/v1/me", h.me)
+	mux.HandleFunc("/api/v1/me/password", h.changePassword)
+	mux.HandleFunc("/api/v1/me/reset", h.resetAccount)
 }
 
 func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
@@ -260,4 +263,171 @@ func (h *Handler) credentials(w http.ResponseWriter, r *http.Request) (Credentia
 		return Credentials{}, false
 	}
 	return creds, true
+}
+
+// maxDisplayName bounds display names.
+const maxDisplayName = 60
+
+// me serves GET /me (the signed-in user) and PATCH /me (edit profile).
+func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.auth.Require(w, r)
+	if !ok {
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		found, err := h.repo.ByID(r.Context(), userID)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				httpx.WriteError(w, http.StatusNotFound, "user not found")
+				return
+			}
+			httpx.WriteError(w, http.StatusInternalServerError, "could not fetch profile")
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": found})
+	case http.MethodPatch:
+		h.updateProfile(w, r, userID)
+	default:
+		httpx.MethodNotAllowed(w)
+	}
+}
+
+func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request, userID string) {
+	var req UpdateProfileRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.DisplayName == nil && req.DefaultCurrency == nil {
+		httpx.WriteError(w, http.StatusBadRequest, "no fields provided")
+		return
+	}
+	if req.DisplayName != nil {
+		name := strings.TrimSpace(*req.DisplayName)
+		if len([]rune(name)) > maxDisplayName {
+			httpx.WriteError(w, http.StatusBadRequest, "display name must be at most 60 characters")
+			return
+		}
+		req.DisplayName = &name
+	}
+	if req.DefaultCurrency != nil {
+		code := strings.ToUpper(strings.TrimSpace(*req.DefaultCurrency))
+		known, err := h.repo.CurrencyExists(r.Context(), code)
+		if err != nil {
+			httpx.WriteError(w, http.StatusInternalServerError, "could not check currency")
+			return
+		}
+		if !validate.Currency(code) || !known {
+			httpx.WriteError(w, http.StatusBadRequest, "default_currency is not a supported currency")
+			return
+		}
+		req.DefaultCurrency = &code
+	}
+
+	updated, err := h.repo.UpdateProfile(r.Context(), userID, req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "could not update profile")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": updated})
+}
+
+// changePassword checks the current password, stores the new one, and signs
+// out every other session: all refresh tokens are revoked and a fresh session
+// is returned for this device.
+func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.auth.Require(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.MethodNotAllowed(w)
+		return
+	}
+	var req ChangePasswordRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.NewPassword) < minPasswordLength {
+		httpx.WriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+		return
+	}
+
+	hash, err := h.repo.PasswordHash(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not change password")
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.CurrentPassword)) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "current password is incorrect")
+		return
+	}
+	if req.CurrentPassword == req.NewPassword {
+		httpx.WriteError(w, http.StatusBadRequest, "new password must be different")
+		return
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not hash password")
+		return
+	}
+	if err := h.repo.SetPassword(r.Context(), userID, string(newHash)); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not change password")
+		return
+	}
+	if err := h.refresh.RevokeAll(r.Context(), userID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not sign out other devices")
+		return
+	}
+
+	owner, err := h.repo.ByID(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch profile")
+		return
+	}
+	h.writeSession(w, r, owner, http.StatusOK)
+}
+
+// resetAccount erases the user's ledger data (transactions, accounts, budgets,
+// custom categories) after re-checking their password. The login and sessions
+// stay, so the user can start over right away.
+func (h *Handler) resetAccount(w http.ResponseWriter, r *http.Request) {
+	userID, ok := h.auth.Require(w, r)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.MethodNotAllowed(w)
+		return
+	}
+	var req ResetRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if req.Password == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "password is required")
+		return
+	}
+
+	hash, err := h.repo.PasswordHash(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not reset account")
+		return
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "password is incorrect")
+		return
+	}
+
+	counts, err := h.repo.ResetData(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not reset account")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"message": "account reset", "deleted": counts})
 }
