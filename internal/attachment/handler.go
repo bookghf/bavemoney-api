@@ -9,6 +9,7 @@ import (
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/validate"
 )
 
 const basePath = "/api/v1/transactions"
@@ -23,7 +24,11 @@ func NewHandler(repo *Repository, authenticator *auth.Authenticator) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	mux.HandleFunc(basePath+"/", h.attachmentRouter)
+	// Registered under /{id}/attachment so these routes are more specific than
+	// the transaction handler's /api/v1/transactions/ subtree instead of
+	// conflicting with it.
+	mux.HandleFunc(basePath+"/{id}/attachment", h.attachmentRouter)
+	mux.HandleFunc(basePath+"/{id}/attachment/", h.attachmentRouter)
 }
 
 func (h *Handler) attachmentRouter(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +41,12 @@ func (h *Handler) attachmentRouter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	transactionID := parts[0]
-	if transactionID == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "transaction_id is required")
+	if !validate.UUID(transactionID) {
+		httpx.WriteError(w, http.StatusNotFound, "transaction not found")
+		return
+	}
+	if len(parts) >= 3 && !validate.UUID(parts[len(parts)-1]) {
+		httpx.WriteError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 
@@ -99,7 +108,11 @@ func (h *Handler) presignedURL(w http.ResponseWriter, r *http.Request, transacti
 		return
 	}
 
-	attachmentID, err := h.repo.Create(r.Context(), transactionID)
+	attachmentID, err := h.repo.Create(r.Context(), userID, transactionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		httpx.WriteError(w, http.StatusNotFound, "transaction not found")
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create attachment")
 		return
@@ -129,29 +142,17 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request, transactionID,
 		return
 	}
 
-	owns, err := h.repo.VerifyOwnership(r.Context(), userID, transactionID)
-	if err != nil || !owns {
-		httpx.WriteError(w, http.StatusNotFound, "transaction not found")
-		return
-	}
-
-	att, err := h.repo.Get(r.Context(), attachmentID)
+	fileURL := fmt.Sprintf("https://cdn.example.com/receipts/%s", attachmentID)
+	att, err := h.repo.Confirm(r.Context(), userID, transactionID, attachmentID, fileURL)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusNotFound, "attachment not found")
 			return
 		}
-		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch attachment")
-		return
-	}
-
-	fileURL := fmt.Sprintf("https://cdn.example.com/receipts/%s", attachmentID)
-	if err := h.repo.UpdateURL(r.Context(), attachmentID, fileURL, 0); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not confirm upload")
 		return
 	}
 
-	att.FileURL = fileURL
 	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"attachment": att})
 }
 
@@ -166,13 +167,11 @@ func (h *Handler) deleteAttachment(w http.ResponseWriter, r *http.Request, trans
 		return
 	}
 
-	owns, err := h.repo.VerifyOwnership(r.Context(), userID, transactionID)
-	if err != nil || !owns {
-		httpx.WriteError(w, http.StatusNotFound, "transaction not found")
-		return
-	}
-
-	if err := h.repo.Delete(r.Context(), attachmentID); err != nil {
+	if err := h.repo.Delete(r.Context(), userID, transactionID, attachmentID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "attachment not found")
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not delete attachment")
 		return
 	}

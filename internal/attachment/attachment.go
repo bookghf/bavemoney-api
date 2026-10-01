@@ -1,11 +1,11 @@
 package attachment
 
 type Attachment struct {
-	ID             string `json:"id"`
-	TransactionID  string `json:"transaction_id"`
-	FileURL        string `json:"file_url"`
-	FileSizeBytes  int    `json:"file_size_bytes"`
-	UploadedAt     string `json:"uploaded_at"`
+	ID            string `json:"id"`
+	TransactionID string `json:"transaction_id"`
+	FileURL       string `json:"file_url"`
+	FileSizeBytes int    `json:"file_size_bytes"`
+	UploadedAt    string `json:"uploaded_at"`
 }
 
 type PresignedURLRequest struct {

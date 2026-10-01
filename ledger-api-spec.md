@@ -720,9 +720,13 @@ Aggregated spending and income summary for a given period.
 
 | Param | Type | Required | Notes |
 |-------|------|----------|-------|
-| period | string | yes | `week`, `month`, or `year` |
-| date | string | yes | A date within the desired period. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026`. For `week`: any date in that week (`2026-08-12`) |
+| period | string | yes | `day`, `week` (Sunday–Saturday), `month`, `year`, or `custom` |
+| date | string | unless custom | A date within the desired period. For `day`/`week`: `2026-08-12`. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026` |
+| from, to | string | custom only | Inclusive `YYYY-MM-DD` bounds; `to` ≥ `from`, at most 731 days |
 | account_id | uuid | no | Filter to a specific account |
+| category_id | uuid | no | Filter to one category. A top-level category includes its subcategories; a subcategory matches only itself |
+| type | string | no | `expense` (default) or `income`: which transactions `by_category` breaks down |
+| tz | string | no | IANA time zone (e.g. `Asia/Bangkok`) deciding which calendar day a transaction falls on. Defaults to `UTC` |
 | currency | string | no | Report currency. Defaults to user's `default_currency`. All amounts are converted |
 
 **Response: `200 OK`**
@@ -767,6 +771,8 @@ Aggregated spending and income summary for a given period.
   ]
 }
 ```
+
+Transfers are excluded. `daily_breakdown` has one row per day in the range, zero days included. `by_category` is sorted largest first and also carries `transaction_count`; transactions without a category are grouped under `"Uncategorized"` (empty `id`), and when a category has subcategory spending, entries filed on the parent itself appear as an `"Other"` subcategory (empty `id`). The response also echoes `time_zone`, `type`, and the overall `transaction_count`.
 
 `percentage` values within `by_category` are relative to `total_expense` for expense categories and `total_income` for income categories.
 

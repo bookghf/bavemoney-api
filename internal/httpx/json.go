@@ -3,9 +3,15 @@ package httpx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
+
+	"ledger-api/internal/validate"
 )
+
+// MaxBodyBytes caps every JSON request body.
+const MaxBodyBytes = 1 << 20
 
 // WriteJSON writes payload as a JSON body with the given status.
 func WriteJSON(w http.ResponseWriter, status int, payload interface{}) {
@@ -26,7 +32,13 @@ func WriteMessage(w http.ResponseWriter, status int, message string) {
 
 // DecodeJSON reads the request body into dst, reporting a 400 on malformed JSON.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			WriteError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return false
+		}
 		WriteError(w, http.StatusBadRequest, "invalid JSON")
 		return false
 	}
@@ -34,11 +46,11 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
 }
 
 // PathID returns the resource id that follows prefix in the request path,
-// reporting a 404 when it is missing.
+// reporting a 404 when it is missing or not a UUID (no row could match it).
 func PathID(w http.ResponseWriter, r *http.Request, prefix string) (string, bool) {
 	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, prefix))
-	if id == "" {
-		w.WriteHeader(http.StatusNotFound)
+	if !validate.UUID(id) {
+		WriteError(w, http.StatusNotFound, "not found")
 		return "", false
 	}
 	return id, true

@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"net/http"
 
 	"ledger-api/internal/auth"
@@ -33,28 +34,29 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	period := r.URL.Query().Get("period")
-	date := r.URL.Query().Get("date")
-	accountID := r.URL.Query().Get("account_id")
-	currency := r.URL.Query().Get("currency")
-
-	if period == "" || date == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "period and date are required")
-		return
+	query := r.URL.Query()
+	filter := SummaryFilter{
+		Period:     query.Get("period"),
+		Date:       query.Get("date"),
+		From:       query.Get("from"),
+		To:         query.Get("to"),
+		AccountID:  query.Get("account_id"),
+		CategoryID: query.Get("category_id"),
+		Type:       query.Get("type"),
+		Currency:   query.Get("currency"),
+		TimeZone:   query.Get("tz"),
 	}
 
-	if currency == "" {
-		currency = "USD"
-	}
-
-	summary, err := h.repo.GetSummary(r.Context(), userID, period, date, accountID, currency)
+	summary, err := h.repo.GetSummary(r.Context(), userID, filter)
 	if err != nil {
+		var invalid *InvalidFilterError
+		if errors.As(err, &invalid) {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch report")
 		return
 	}
-
-	summary.ByCategory = []CategorySummary{}
-	summary.DailyBreakdown = []DailyBreakdown{}
 
 	httpx.WriteJSON(w, http.StatusOK, summary)
 }

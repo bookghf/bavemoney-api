@@ -5,26 +5,9 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
-	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
-
-type AdminAuthenticator struct {
-	jwtSecret string
-	db        *sql.DB
-}
-
-func NewAdminAuthenticator(jwtSecret string, db *sql.DB) *AdminAuthenticator {
-	return &AdminAuthenticator{jwtSecret: jwtSecret, db: db}
-}
-
-func (a *AdminAuthenticator) IssueTokens(ctx context.Context, adminID, email string) (access, refresh string, err error) {
-	access = fmt.Sprintf("admin_access_%d", time.Now().Unix())
-	refresh = fmt.Sprintf("admin_refresh_%d", time.Now().Unix())
-	return
-}
 
 type AdminRepository struct {
 	db *sql.DB
@@ -37,7 +20,7 @@ func NewAdminRepository(db *sql.DB) *AdminRepository {
 func (r *AdminRepository) GetByEmail(ctx context.Context, email string) (AdminUser, string, error) {
 	var admin AdminUser
 	var hash string
-	query := `SELECT id, email, role, password_hash, created_at FROM admin_users WHERE email = $1`
+	query := `SELECT id, email, role, password_hash, created_at FROM admin_users WHERE lower(email) = $1`
 	err := r.db.QueryRowContext(ctx, query, email).Scan(&admin.ID, &admin.Email, &admin.Role, &hash, &admin.CreatedAt)
 	return admin, hash, err
 }

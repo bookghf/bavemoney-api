@@ -1,10 +1,19 @@
 // Package transaction owns ledger entries against accounts.
 package transaction
 
+import "time"
+
+// Transaction types.
+const (
+	TypeIncome   = "income"
+	TypeExpense  = "expense"
+	TypeTransfer = "transfer"
+)
+
 type CategoryInfo struct {
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-	Parent *CategoryInfo  `json:"parent,omitempty"`
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Parent *CategoryInfo `json:"parent,omitempty"`
 }
 
 type Attachment struct {
@@ -16,46 +25,69 @@ type Attachment struct {
 
 // Transaction is the API representation of a ledger entry.
 type Transaction struct {
-	ID                       string        `json:"id"`
-	AccountID                string        `json:"account_id"`
-	AccountName              string        `json:"account_name"`
-	Category                 *CategoryInfo `json:"category"`
-	Type                     string        `json:"type"`
-	Amount                   string        `json:"amount"`
-	Currency                 string        `json:"currency"`
-	AmountInDefaultCurrency  string        `json:"amount_in_default_currency"`
-	Note                     string        `json:"note,omitempty"`
-	Tags                     []string      `json:"tags"`
-	Attachments              []Attachment  `json:"attachments"`
-	OccurredAt               string        `json:"occurred_at"`
-	CreatedAt                string        `json:"created_at"`
-	UpdatedAt                string        `json:"updated_at"`
+	ID            string        `json:"id"`
+	AccountID     string        `json:"account_id"`
+	AccountName   string        `json:"account_name"`
+	ToAccountID   string        `json:"to_account_id,omitempty"`
+	ToAccountName string        `json:"to_account_name,omitempty"`
+	Category      *CategoryInfo `json:"category"`
+	Type          string        `json:"type"`
+	Amount        string        `json:"amount"`
+	Currency      string        `json:"currency"`
+	// AmountInDefaultCurrency is null when no exchange rate is known.
+	AmountInDefaultCurrency *string      `json:"amount_in_default_currency"`
+	Note                    string       `json:"note,omitempty"`
+	Tags                    []string     `json:"tags"`
+	Attachments             []Attachment `json:"attachments"`
+	OccurredAt              string       `json:"occurred_at"`
+	CreatedAt               string       `json:"created_at"`
+	UpdatedAt               string       `json:"updated_at"`
 }
 
-// CreateRequest is the POST /transactions payload.
+// ListFilter narrows and pages GET /transactions. Page is 1-indexed; Sort is
+// a column name optionally prefixed with "-" for descending.
+type ListFilter struct {
+	Page       int
+	Limit      int
+	AccountID  string
+	CategoryID string
+	Type       string
+	Tags       []string
+	// FromTime (inclusive) and ToTime (exclusive) bound occurred_at; zero
+	// means unbounded.
+	FromTime time.Time
+	ToTime   time.Time
+	Search   string
+	Sort     string
+}
+
+// CreateRequest is the POST /transactions payload. A transfer (type
+// "transfer") moves the amount from AccountID to ToAccountID.
 type CreateRequest struct {
-	AccountID  string   `json:"account_id"`
-	CategoryID string   `json:"category_id,omitempty"`
-	Type       string   `json:"type"`
-	Amount     string   `json:"amount"`
-	Currency   string   `json:"currency"`
-	Note       string   `json:"note,omitempty"`
-	Tags       []string `json:"tags"`
-	OccurredAt string   `json:"occurred_at"`
+	AccountID   string   `json:"account_id"`
+	ToAccountID string   `json:"to_account_id,omitempty"`
+	CategoryID  string   `json:"category_id,omitempty"`
+	Type        string   `json:"type"`
+	Amount      string   `json:"amount"`
+	Currency    string   `json:"currency"`
+	Note        string   `json:"note,omitempty"`
+	Tags        []string `json:"tags"`
+	OccurredAt  string   `json:"occurred_at"`
 }
 
 // UpdateRequest is the PATCH /transactions/{id} payload; nil fields are left alone.
 type UpdateRequest struct {
-	CategoryID *string  `json:"category_id,omitempty"`
-	Type       *string  `json:"type,omitempty"`
-	Amount     *string  `json:"amount,omitempty"`
-	Note       *string  `json:"note,omitempty"`
-	Tags       []string `json:"tags,omitempty"`
-	OccurredAt *string  `json:"occurred_at,omitempty"`
+	CategoryID *string `json:"category_id,omitempty"`
+	Type       *string `json:"type,omitempty"`
+	Amount     *string `json:"amount,omitempty"`
+	Note       *string `json:"note,omitempty"`
+	// Tags replaces the tag list when present; [] clears it.
+	Tags       *[]string `json:"tags,omitempty"`
+	OccurredAt *string   `json:"occurred_at,omitempty"`
 }
 
 // Empty reports whether the request carries no field to update.
 func (r UpdateRequest) Empty() bool {
 	return r.CategoryID == nil && r.Type == nil && r.Amount == nil &&
-		r.Note == nil && r.OccurredAt == nil && len(r.Tags) == 0
+		r.Note == nil && r.OccurredAt == nil && r.Tags == nil
 }

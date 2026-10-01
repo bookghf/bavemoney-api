@@ -1,11 +1,11 @@
 package account
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 
 	"ledger-api/internal/auth"
+	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
 )
 
@@ -67,7 +67,7 @@ func (h *Handler) item(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, userID string) {
-	accounts, err := h.repo.List(r.Context(), userID)
+	accounts, err := h.repo.List(r.Context(), userID, r.URL.Query().Get("include_archived") == "true")
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not list accounts")
 		return
@@ -80,13 +80,17 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" || req.Type == "" || req.Currency == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "name, type, currency are required")
+	if err := normalizeCreate(&req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	created, err := h.repo.Create(r.Context(), userID, req)
 	if err != nil {
+		if errors.Is(err, ErrUnknownCurrency) {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create account")
 		return
 	}
@@ -96,7 +100,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, userID, id string) {
 	found, err := h.repo.Get(r.Context(), userID, id)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, ErrNotFound) {
 			httpx.WriteError(w, http.StatusNotFound, "account not found")
 			return
 		}
@@ -116,8 +120,29 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 		return
 	}
 
-	if err := h.repo.Update(r.Context(), userID, id, req); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "could not update account")
+	existing, err := h.repo.Get(r.Context(), userID, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "account not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch account")
+		return
+	}
+	if err := checkUpdate(existing, &req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.repo.Update(r.Context(), userID, existing, req); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "account not found")
+		case errors.Is(err, ErrCurrencyLocked), errors.Is(err, ErrUnknownCurrency), database.IsCheckViolation(err):
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "could not update account")
+		}
 		return
 	}
 
@@ -131,6 +156,10 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 
 func (h *Handler) archive(w http.ResponseWriter, r *http.Request, userID, id string) {
 	if err := h.repo.Archive(r.Context(), userID, id); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "account not found")
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not delete account")
 		return
 	}

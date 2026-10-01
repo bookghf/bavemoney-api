@@ -6,17 +6,23 @@ import (
 	"errors"
 
 	"ledger-api/internal/database"
+	"ledger-api/internal/validate"
 )
 
-const columns = `id, parent_id, name, type, icon, color`
+const columns = `id, parent_id, name, type, icon, color, is_system`
+
+// visible matches the categories a user can see: their own plus the global
+// system categories. $1 is the user id.
+const visible = `(user_id = $1 OR (user_id IS NULL AND is_system))`
 
 // Parent validation failures surfaced to the caller as 400s.
 var (
 	ErrParentNotFound    = errors.New("parent category not found")
 	ErrParentNotTopLevel = errors.New("parent category must be a top-level category")
+	ErrParentType        = errors.New("a subcategory must have the same type as its parent")
 )
 
-// Repository reads and writes categories owned by a user.
+// Repository reads categories visible to a user and writes the ones they own.
 type Repository struct {
 	db *sql.DB
 }
@@ -26,12 +32,13 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// List returns the user's categories as a flat slice ordered by name.
+// List returns the user's categories and the system categories as a flat
+// slice ordered by name.
 func (r *Repository) List(ctx context.Context, userID string) ([]Category, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+columns+`
 		FROM categories
-		WHERE user_id = $1
+		WHERE `+visible+`
 		ORDER BY name
 	`, userID)
 	if err != nil {
@@ -50,13 +57,13 @@ func (r *Repository) List(ctx context.Context, userID string) ([]Category, error
 	return categories, rows.Err()
 }
 
-// Get returns one category, or sql.ErrNoRows when the user does not own it.
+// Get returns one category, or sql.ErrNoRows when the user can not see it.
 func (r *Repository) Get(ctx context.Context, userID, id string) (Category, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+columns+`
 		FROM categories
-		WHERE id = $1 AND user_id = $2
-	`, id, userID)
+		WHERE `+visible+` AND id = $2
+	`, userID, id)
 	return scan(row)
 }
 
@@ -117,16 +124,24 @@ func (r *Repository) Delete(ctx context.Context, userID, id string) error {
 }
 
 // ValidateParent checks that parentID (when set) names a top-level category
-// owned by the user, keeping the tree at most two levels deep.
-func (r *Repository) ValidateParent(ctx context.Context, userID, parentID string) error {
+// visible to the user, keeping the tree at most two levels deep. Users may add
+// their own subcategories under a system category.
+// childType, when set, must equal the parent's type.
+func (r *Repository) ValidateParent(ctx context.Context, userID, parentID, childType string) error {
 	if parentID == "" {
 		return nil
 	}
+	if !validate.UUID(parentID) {
+		return ErrParentNotFound
+	}
 
-	var grandParentID sql.NullString
+	var (
+		grandParentID sql.NullString
+		parentType    string
+	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT parent_id FROM categories WHERE id = $1 AND user_id = $2
-	`, parentID, userID).Scan(&grandParentID)
+		SELECT parent_id, type FROM categories WHERE `+visible+` AND id = $2
+	`, userID, parentID).Scan(&grandParentID, &parentType)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrParentNotFound
@@ -135,6 +150,9 @@ func (r *Repository) ValidateParent(ctx context.Context, userID, parentID string
 	}
 	if grandParentID.Valid {
 		return ErrParentNotTopLevel
+	}
+	if childType != "" && childType != parentType {
+		return ErrParentType
 	}
 	return nil
 }
@@ -149,7 +167,7 @@ func scan(src scanner) (Category, error) {
 		category              Category
 		parentID, icon, color sql.NullString
 	)
-	if err := src.Scan(&category.ID, &parentID, &category.Name, &category.Type, &icon, &color); err != nil {
+	if err := src.Scan(&category.ID, &parentID, &category.Name, &category.Type, &icon, &color, &category.IsSystem); err != nil {
 		return Category{}, err
 	}
 	category.ParentID = parentID.String

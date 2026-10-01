@@ -17,7 +17,7 @@ func (r *Repository) Upsert(ctx context.Context, userID, fcmToken, platform stri
 	query := `
 		INSERT INTO device_tokens (user_id, fcm_token, platform)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (fcm_token) DO UPDATE SET platform = EXCLUDED.platform
+		ON CONFLICT (fcm_token) DO UPDATE SET platform = EXCLUDED.platform, user_id = EXCLUDED.user_id
 		RETURNING id, fcm_token, platform, created_at
 	`
 	var token DeviceToken
