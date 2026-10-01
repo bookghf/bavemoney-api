@@ -40,7 +40,9 @@ func (r *Repository) ByEmail(ctx context.Context, email string) (User, string, e
 	err := r.db.QueryRowContext(ctx, `
 		SELECT id, password_hash, display_name, default_currency, status, created_at
 		FROM users
-		WHERE email = $1
+		WHERE lower(email) = $1
+		ORDER BY created_at
+		LIMIT 1
 	`, email).Scan(&user.ID, &hash, &displayName, &user.DefaultCurrency, &user.Status, &user.CreatedAt)
 	if err != nil {
 		return User{}, "", err
@@ -66,4 +68,11 @@ func (r *Repository) ByID(ctx context.Context, id string) (User, error) {
 	}
 	user.DisplayName = displayName.String
 	return user, nil
+}
+
+// CurrencyExists reports whether code is an active currency.
+func (r *Repository) CurrencyExists(ctx context.Context, code string) (bool, error) {
+	var exists bool
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM currencies WHERE code = $1 AND is_active)`, code).Scan(&exists)
+	return exists, err
 }

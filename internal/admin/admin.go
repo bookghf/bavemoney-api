@@ -13,22 +13,20 @@ type AdminLoginRequest struct {
 }
 
 type AdminAuthResponse struct {
-	Admin            AdminUser `json:"admin"`
-	AccessToken      string    `json:"access_token"`
-	RefreshToken     string    `json:"refresh_token"`
-	ExpiresIn        int       `json:"expires_in"`
-	RefreshExpiresIn int       `json:"refresh_token_expires_in"`
+	Admin       AdminUser `json:"admin"`
+	AccessToken string    `json:"access_token"`
+	ExpiresIn   int       `json:"expires_in"`
 }
 
 type UserInfo struct {
-	ID                string `json:"id"`
-	Email             string `json:"email"`
-	DisplayName       string `json:"display_name"`
-	DefaultCurrency   string `json:"default_currency"`
-	Status            string `json:"status"`
-	TransactionCount  int    `json:"transaction_count"`
-	LastActiveAt      string `json:"last_active_at"`
-	CreatedAt         string `json:"created_at"`
+	ID               string `json:"id"`
+	Email            string `json:"email"`
+	DisplayName      string `json:"display_name"`
+	DefaultCurrency  string `json:"default_currency"`
+	Status           string `json:"status"`
+	TransactionCount int    `json:"transaction_count"`
+	LastActiveAt     string `json:"last_active_at"`
+	CreatedAt        string `json:"created_at"`
 }
 
 type UserDetailResponse struct {
@@ -49,10 +47,10 @@ type UserDetail struct {
 }
 
 type UserStats struct {
-	TotalAccounts      int    `json:"total_accounts"`
-	TotalTransactions  int    `json:"total_transactions"`
-	TotalBudgets       int    `json:"total_budgets"`
-	LastTransactionAt  string `json:"last_transaction_at"`
+	TotalAccounts     int    `json:"total_accounts"`
+	TotalTransactions int    `json:"total_transactions"`
+	TotalBudgets      int    `json:"total_budgets"`
+	LastTransactionAt string `json:"last_transaction_at"`
 }
 
 type SuspendRequest struct {
@@ -61,21 +59,21 @@ type SuspendRequest struct {
 }
 
 type CategoryInfo struct {
-	ID              string           `json:"id"`
-	Name            string           `json:"name"`
-	Type            string           `json:"type"`
-	Icon            string           `json:"icon"`
-	Color           string           `json:"color"`
-	IsSystem        bool             `json:"is_system"`
-	Subcategories   []CategoryInfo   `json:"subcategories"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Type          string         `json:"type"`
+	Icon          string         `json:"icon"`
+	Color         string         `json:"color"`
+	IsSystem      bool           `json:"is_system"`
+	Subcategories []CategoryInfo `json:"subcategories"`
 }
 
 type CreateCategoryRequest struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
 	ParentID *string `json:"parent_id"`
-	Icon     string `json:"icon"`
-	Color    string `json:"color"`
+	Icon     string  `json:"icon"`
+	Color    string  `json:"color"`
 }
 
 type CurrencyInfo struct {
@@ -112,12 +110,12 @@ type CreateExchangeRateRequest struct {
 }
 
 type AnalyticsOverview struct {
-	TotalUsers        int           `json:"total_users"`
-	ActiveUsers30d    int           `json:"active_users_30d"`
-	NewUsers30d       int           `json:"new_users_30d"`
-	TotalTransactions30d int        `json:"total_transactions_30d"`
-	GrowthRatePct     float64       `json:"growth_rate_pct"`
-	TopCurrencies     []CurrencyCount `json:"top_currencies"`
+	TotalUsers           int             `json:"total_users"`
+	ActiveUsers30d       int             `json:"active_users_30d"`
+	NewUsers30d          int             `json:"new_users_30d"`
+	TotalTransactions30d int             `json:"total_transactions_30d"`
+	GrowthRatePct        float64         `json:"growth_rate_pct"`
+	TopCurrencies        []CurrencyCount `json:"top_currencies"`
 }
 
 type CurrencyCount struct {
@@ -126,12 +124,12 @@ type CurrencyCount struct {
 }
 
 type ActivityDataPoint struct {
-	Date               string `json:"date"`
-	ActiveUsers        int    `json:"active_users"`
-	NewUsers           int    `json:"new_users"`
-	TransactionsCreated int   `json:"transactions_created"`
-	TotalExpenseUSD    string `json:"total_expense_usd"`
-	TotalIncomeUSD     string `json:"total_income_usd"`
+	Date                string `json:"date"`
+	ActiveUsers         int    `json:"active_users"`
+	NewUsers            int    `json:"new_users"`
+	TransactionsCreated int    `json:"transactions_created"`
+	TotalExpenseUSD     string `json:"total_expense_usd"`
+	TotalIncomeUSD      string `json:"total_income_usd"`
 }
 
 type ActivityResponse struct {

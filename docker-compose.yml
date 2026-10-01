@@ -1,3 +1,5 @@
+name: money
+
 services:
   db:
     image: postgres:16-alpine
@@ -5,9 +7,10 @@ services:
     environment:
       POSTGRES_DB: ledger
       POSTGRES_USER: ledger
-      POSTGRES_PASSWORD: <db-password>
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-<db-password>}
     ports:
-      - "5432:5432"
+      # Loopback only: reachable from this machine's tools, not the network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
@@ -26,9 +29,12 @@ services:
       db:
         condition: service_healthy
     environment:
+      APP_ENV: ${APP_ENV:-development}
       PORT: 8080
-      DATABASE_URL: postgres://ledger:<db-password>@db:5432/ledger?sslmode=disable
-      JWT_SECRET: <jwt-secret>
+      DATABASE_URL: postgres://ledger:${POSTGRES_PASSWORD:-<db-password>}@db:5432/ledger?sslmode=disable
+      # Secrets come from money-api/.env (git-ignored); see .env.example.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in money-api/.env (see .env.example)}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
     ports:
       - "8080:8080"
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
@@ -80,11 +81,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.Name == "" || req.Type == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "name and type are required")
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" || len([]rune(req.Name)) > 50 {
+		httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
 		return
 	}
-	if !h.validParent(w, r, userID, req.ParentID) {
+	if req.Type != "income" && req.Type != "expense" {
+		httpx.WriteError(w, http.StatusBadRequest, "type must be income or expense")
+		return
+	}
+	if !h.validParent(w, r, userID, req.ParentID, req.Type) {
 		return
 	}
 
@@ -118,7 +124,19 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 		httpx.WriteError(w, http.StatusBadRequest, "no fields provided")
 		return
 	}
-	if req.ParentID != nil && !h.validParent(w, r, userID, *req.ParentID) {
+	existing, ok := h.editable(w, r, userID, id)
+	if !ok {
+		return
+	}
+	if req.Name != nil {
+		trimmed := strings.TrimSpace(*req.Name)
+		if trimmed == "" || len([]rune(trimmed)) > 50 {
+			httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
+			return
+		}
+		req.Name = &trimmed
+	}
+	if req.ParentID != nil && !h.validParent(w, r, userID, *req.ParentID, existing.Type) {
 		return
 	}
 
@@ -130,6 +148,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, userID, id string) {
+	if _, ok := h.editable(w, r, userID, id); !ok {
+		return
+	}
 	if err := h.repo.Delete(r.Context(), userID, id); err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not delete category")
 		return
@@ -137,10 +158,29 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, userID, id stri
 	httpx.WriteJSON(w, http.StatusOK, map[string]string{"message": "category deleted"})
 }
 
+// editable reports whether the user may change the category, writing a 404
+// when they can not see it or a 403 when it is a system category.
+func (h *Handler) editable(w http.ResponseWriter, r *http.Request, userID, id string) (Category, bool) {
+	found, err := h.repo.Get(r.Context(), userID, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "category not found")
+			return Category{}, false
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch category")
+		return Category{}, false
+	}
+	if found.IsSystem {
+		httpx.WriteError(w, http.StatusForbidden, "system categories can not be modified")
+		return Category{}, false
+	}
+	return found, true
+}
+
 // validParent reports whether parentID is usable, writing the 400 response when
 // it is not.
-func (h *Handler) validParent(w http.ResponseWriter, r *http.Request, userID, parentID string) bool {
-	if err := h.repo.ValidateParent(r.Context(), userID, parentID); err != nil {
+func (h *Handler) validParent(w http.ResponseWriter, r *http.Request, userID, parentID, childType string) bool {
+	if err := h.repo.ValidateParent(r.Context(), userID, parentID, childType); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return false
 	}

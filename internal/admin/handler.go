@@ -10,16 +10,18 @@ import (
 	"time"
 
 	"ledger-api/internal/auth"
+	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/validate"
 )
 
 type Handler struct {
-	adminRepo      *AdminRepository
-	userRepo       *UserRepository
-	categoryRepo   *CategoryRepository
-	currencyRepo   *CurrencyRepository
-	analyticsRepo  *AnalyticsRepository
-	authenticator  *auth.Authenticator
+	adminRepo     *AdminRepository
+	userRepo      *UserRepository
+	categoryRepo  *CategoryRepository
+	currencyRepo  *CurrencyRepository
+	analyticsRepo *AnalyticsRepository
+	authenticator *auth.Authenticator
 }
 
 func NewHandler(db *sql.DB, authenticator *auth.Authenticator) *Handler {
@@ -34,16 +36,22 @@ func NewHandler(db *sql.DB, authenticator *auth.Authenticator) *Handler {
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	// Login is the only admin route open without an admin token.
 	mux.HandleFunc("/api/v1/admin/auth/login", h.login)
-	mux.HandleFunc("/api/v1/admin/users", h.usersList)
-	mux.HandleFunc("/api/v1/admin/users/", h.usersRouter)
-	mux.HandleFunc("/api/v1/admin/categories", h.categoriesRouter)
-	mux.HandleFunc("/api/v1/admin/categories/", h.categoriesItemRouter)
-	mux.HandleFunc("/api/v1/admin/currencies", h.currenciesRouter)
-	mux.HandleFunc("/api/v1/admin/currencies/", h.currenciesItemRouter)
-	mux.HandleFunc("/api/v1/admin/exchange-rates", h.exchangeRatesRouter)
-	mux.HandleFunc("/api/v1/admin/analytics/overview", h.analyticsOverview)
-	mux.HandleFunc("/api/v1/admin/analytics/activity", h.analyticsActivity)
+	mux.HandleFunc("/api/v1/admin/users", h.requireAdmin(h.usersList))
+	mux.HandleFunc("/api/v1/admin/users/", h.requireAdmin(h.usersRouter))
+	mux.HandleFunc("/api/v1/admin/categories", h.requireAdmin(h.categoriesRouter))
+	mux.HandleFunc("/api/v1/admin/categories/", h.requireAdmin(h.categoriesItemRouter))
+	mux.HandleFunc("/api/v1/admin/currencies", h.requireAdmin(h.currenciesRouter))
+	mux.HandleFunc("/api/v1/admin/currencies/", h.requireAdmin(h.currenciesItemRouter))
+	mux.HandleFunc("/api/v1/admin/exchange-rates", h.requireAdmin(h.exchangeRatesRouter))
+	mux.HandleFunc("/api/v1/admin/analytics/overview", h.requireAdmin(h.analyticsOverview))
+	mux.HandleFunc("/api/v1/admin/analytics/activity", h.requireAdmin(h.analyticsActivity))
+	// Anything else under /admin/ is unknown, but must not leak whether it
+	// exists to an unauthenticated caller.
+	mux.HandleFunc("/api/v1/admin/", h.requireAdmin(func(w http.ResponseWriter, _ *http.Request) {
+		httpx.WriteError(w, http.StatusNotFound, "not found")
+	}))
 }
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +70,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	admin, hash, err := h.adminRepo.GetByEmail(r.Context(), req.Email)
+	admin, hash, err := h.adminRepo.GetByEmail(r.Context(), validate.NormalizeEmail(req.Email))
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			httpx.WriteError(w, http.StatusUnauthorized, "invalid credentials")
@@ -77,18 +85,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	accessToken, err := h.authenticator.IssueAccessToken(admin.ID, admin.Email)
+	accessToken, err := h.authenticator.IssueAdminToken(admin.ID, admin.Email, admin.Role)
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not issue token")
 		return
 	}
 
+	// Admins get no refresh token: when the session expires they sign in again.
 	resp := AdminAuthResponse{
-		Admin:            admin,
-		AccessToken:      accessToken,
-		RefreshToken:     "admin_refresh_" + fmt.Sprintf("%d", time.Now().Unix()),
-		ExpiresIn:        int(auth.AccessTokenTTL.Seconds()),
-		RefreshExpiresIn: int(auth.RefreshTokenTTL.Seconds()),
+		Admin:       admin,
+		AccessToken: accessToken,
+		ExpiresIn:   int(auth.AdminTokenTTL.Seconds()),
 	}
 
 	httpx.WriteJSON(w, http.StatusOK, resp)
@@ -138,7 +145,10 @@ func (h *Handler) usersRouter(w http.ResponseWriter, r *http.Request) {
 	userID := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/users/")
 	userID = strings.TrimSuffix(userID, "/")
 
-	if userID == "" || strings.Contains(userID, "/") {
+	if strings.HasSuffix(r.URL.Path, "/suspend") {
+		userID = strings.TrimSuffix(userID, "/suspend")
+	}
+	if !validate.UUID(userID) {
 		httpx.WriteError(w, http.StatusNotFound, "user not found")
 		return
 	}
@@ -183,6 +193,10 @@ func (h *Handler) suspendUser(w http.ResponseWriter, r *http.Request, userID str
 	}
 
 	if err := h.userRepo.Suspend(r.Context(), userID, req.Status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "user not found")
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not update user")
 		return
 	}
@@ -210,7 +224,7 @@ func (h *Handler) categoriesItemRouter(w http.ResponseWriter, r *http.Request) {
 	categoryID := strings.TrimPrefix(r.URL.Path, "/api/v1/admin/categories/")
 	categoryID = strings.TrimSuffix(categoryID, "/")
 
-	if categoryID == "" {
+	if !validate.UUID(categoryID) {
 		httpx.WriteError(w, http.StatusNotFound, "category not found")
 		return
 	}
@@ -244,8 +258,12 @@ func (h *Handler) createCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Name == "" || req.Type == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "name and type are required")
+	if strings.TrimSpace(req.Name) == "" || (req.Type != "income" && req.Type != "expense") {
+		httpx.WriteError(w, http.StatusBadRequest, "name is required and type must be income or expense")
+		return
+	}
+	if req.ParentID != nil && !validate.UUID(*req.ParentID) {
+		httpx.WriteError(w, http.StatusBadRequest, "parent_id must be a UUID")
 		return
 	}
 
@@ -266,7 +284,14 @@ func (h *Handler) updateCategory(w http.ResponseWriter, r *http.Request, categor
 	}
 
 	if err := h.categoryRepo.Update(r.Context(), categoryID, req); err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "could not update category")
+		switch {
+		case errors.Is(err, errNoFields):
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, sql.ErrNoRows):
+			httpx.WriteError(w, http.StatusNotFound, "category not found")
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "could not update category")
+		}
 		return
 	}
 
@@ -276,6 +301,10 @@ func (h *Handler) updateCategory(w http.ResponseWriter, r *http.Request, categor
 func (h *Handler) deleteCategory(w http.ResponseWriter, r *http.Request, categoryID string) {
 	count, err := h.categoryRepo.Delete(r.Context(), categoryID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "category not found")
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not delete category")
 		return
 	}
@@ -348,14 +377,19 @@ func (h *Handler) createCurrency(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Code == "" || req.Name == "" || req.Symbol == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "code, name, and symbol are required")
+	req.Code = strings.ToUpper(strings.TrimSpace(req.Code))
+	if !validate.Currency(req.Code) || req.Name == "" || req.Symbol == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "code (3 letters), name, and symbol are required")
 		return
 	}
 
 	c, err := h.currencyRepo.Create(r.Context(), req)
 	if err != nil {
-		httpx.WriteError(w, http.StatusConflict, "currency already exists")
+		if database.IsUniqueViolation(err) {
+			httpx.WriteError(w, http.StatusConflict, "currency already exists")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "could not create currency")
 		return
 	}
 
@@ -369,6 +403,10 @@ func (h *Handler) updateCurrency(w http.ResponseWriter, r *http.Request, code st
 	}
 
 	if err := h.currencyRepo.Update(r.Context(), code, req); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			httpx.WriteError(w, http.StatusNotFound, "currency not found")
+			return
+		}
 		httpx.WriteError(w, http.StatusInternalServerError, "could not update currency")
 		return
 	}
@@ -429,12 +467,24 @@ func (h *Handler) createExchangeRate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.BaseCurrency == "" || req.TargetCurrency == "" || req.Rate == "" || req.EffectiveDate == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "base_currency, target_currency, rate, and effective_date are required")
+	if !validate.Currency(req.BaseCurrency) || !validate.Currency(req.TargetCurrency) || req.BaseCurrency == req.TargetCurrency {
+		httpx.WriteError(w, http.StatusBadRequest, "base_currency and target_currency must be two different currency codes")
+		return
+	}
+	if rate, err := strconv.ParseFloat(req.Rate, 64); err != nil || rate <= 0 {
+		httpx.WriteError(w, http.StatusBadRequest, "rate must be a positive decimal")
+		return
+	}
+	if _, ok := validate.Date(req.EffectiveDate); !ok {
+		httpx.WriteError(w, http.StatusBadRequest, "effective_date must be YYYY-MM-DD")
 		return
 	}
 
 	rate, err := h.currencyRepo.CreateExchangeRate(r.Context(), req)
+	if database.IsForeignKeyViolation(err) {
+		httpx.WriteError(w, http.StatusBadRequest, "unknown currency")
+		return
+	}
 	if err != nil {
 		httpx.WriteError(w, http.StatusInternalServerError, "could not create exchange rate")
 		return

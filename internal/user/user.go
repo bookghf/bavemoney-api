@@ -34,7 +34,7 @@ type LogoutRequest struct {
 // AuthResponse is returned after a successful register, login, or refresh.
 // ExpiresIn is the access token's lifetime in seconds.
 type AuthResponse struct {
-	Token                 string `json:"token"`
+	AccessToken           string `json:"access_token"`
 	ExpiresIn             int    `json:"expires_in"`
 	RefreshToken          string `json:"refresh_token"`
 	RefreshTokenExpiresIn int    `json:"refresh_token_expires_in"`

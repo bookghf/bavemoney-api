@@ -5,6 +5,13 @@ import (
 	"database/sql"
 )
 
+// owned limits a query to attachments of a live transaction owned by the
+// user. Every attachment query goes through it, so an attachment id from
+// another transaction or another user never matches.
+const owned = `
+	a.transaction_id = $2
+	AND EXISTS (SELECT 1 FROM transactions t WHERE t.id = a.transaction_id AND t.user_id = $1 AND t.deleted_at IS NULL)`
+
 type Repository struct {
 	db *sql.DB
 }
@@ -13,55 +20,51 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-func (r *Repository) Create(ctx context.Context, transactionID string) (string, error) {
+// Create adds a pending attachment to a transaction the user owns, returning
+// sql.ErrNoRows when they do not own it.
+func (r *Repository) Create(ctx context.Context, userID, transactionID string) (string, error) {
 	var id string
-	query := `INSERT INTO attachments (transaction_id, file_url) VALUES ($1, '') RETURNING id`
-	err := r.db.QueryRowContext(ctx, query, transactionID).Scan(&id)
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO attachments (transaction_id, file_url)
+		SELECT t.id, '' FROM transactions t
+		WHERE t.id = $2 AND t.user_id = $1 AND t.deleted_at IS NULL
+		RETURNING id
+	`, userID, transactionID).Scan(&id)
 	return id, err
 }
 
-func (r *Repository) UpdateURL(ctx context.Context, attachmentID, fileURL string, fileSizeBytes int) error {
-	query := `UPDATE attachments SET file_url = $1, file_size_bytes = $2 WHERE id = $3`
-	_, err := r.db.ExecContext(ctx, query, fileURL, fileSizeBytes, attachmentID)
-	return err
-}
-
-func (r *Repository) Get(ctx context.Context, attachmentID string) (Attachment, error) {
+// Confirm records the uploaded file's URL, returning sql.ErrNoRows when the
+// attachment is not on that transaction or the user does not own it.
+func (r *Repository) Confirm(ctx context.Context, userID, transactionID, attachmentID, fileURL string) (Attachment, error) {
 	var att Attachment
-	query := `SELECT id, transaction_id, file_url, file_size_bytes, uploaded_at FROM attachments WHERE id = $1`
-	err := r.db.QueryRowContext(ctx, query, attachmentID).
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE attachments a SET file_url = $4
+		WHERE a.id = $3 AND`+owned+`
+		RETURNING a.id, a.transaction_id, a.file_url, COALESCE(a.file_size_bytes, 0), a.uploaded_at
+	`, userID, transactionID, attachmentID, fileURL).
 		Scan(&att.ID, &att.TransactionID, &att.FileURL, &att.FileSizeBytes, &att.UploadedAt)
 	return att, err
 }
 
-func (r *Repository) Delete(ctx context.Context, attachmentID string) error {
-	query := `DELETE FROM attachments WHERE id = $1`
-	_, err := r.db.ExecContext(ctx, query, attachmentID)
-	return err
-}
-
-func (r *Repository) ListByTransaction(ctx context.Context, transactionID string) ([]Attachment, error) {
-	query := `SELECT id, transaction_id, file_url, file_size_bytes, uploaded_at FROM attachments WHERE transaction_id = $1 ORDER BY uploaded_at DESC`
-	rows, err := r.db.QueryContext(ctx, query, transactionID)
+// Delete removes an attachment, returning sql.ErrNoRows when it is not on that
+// transaction or the user does not own it.
+func (r *Repository) Delete(ctx context.Context, userID, transactionID, attachmentID string) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM attachments a WHERE a.id = $3 AND`+owned,
+		userID, transactionID, attachmentID)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
-
-	var attachments []Attachment
-	for rows.Next() {
-		var att Attachment
-		if err := rows.Scan(&att.ID, &att.TransactionID, &att.FileURL, &att.FileSizeBytes, &att.UploadedAt); err != nil {
-			return nil, err
-		}
-		attachments = append(attachments, att)
+	if n, _ := result.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
 	}
-	return attachments, nil
+	return nil
 }
 
+// VerifyOwnership reports whether the user owns the live transaction.
 func (r *Repository) VerifyOwnership(ctx context.Context, userID, transactionID string) (bool, error) {
 	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM transactions WHERE id = $1 AND user_id = $2)`
-	err := r.db.QueryRowContext(ctx, query, transactionID, userID).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS (SELECT 1 FROM transactions WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL)
+	`, transactionID, userID).Scan(&exists)
 	return exists, err
 }

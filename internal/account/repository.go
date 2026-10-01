@@ -3,11 +3,33 @@ package account
 import (
 	"context"
 	"database/sql"
+	"errors"
 
 	"ledger-api/internal/database"
 )
 
-const columns = `id, name, type, currency, initial_balance, is_archived, created_at`
+// columns includes current_balance: initial balance plus income, minus
+// expense, minus transfers out, plus transfers in, across the account's live
+// transactions. Money is read as text so it reaches clients exactly.
+const columns = `id, name, type, currency, initial_balance::text,
+	(initial_balance + COALESCE((
+		SELECT SUM(CASE
+			WHEN t.to_account_id = accounts.id THEN t.amount
+			WHEN t.type = 'income' THEN t.amount
+			WHEN t.type IN ('expense', 'transfer') THEN -t.amount
+			ELSE 0
+		END)
+		FROM transactions t
+		WHERE (t.account_id = accounts.id OR t.to_account_id = accounts.id) AND t.deleted_at IS NULL
+	), 0))::text AS current_balance,
+	is_archived, created_at`
+
+// Errors surfaced to the caller.
+var (
+	ErrNotFound        = errors.New("account not found")
+	ErrUnknownCurrency = errors.New("currency is not supported")
+	ErrCurrencyLocked  = errors.New("currency can not change once the account has transactions")
+)
 
 // Repository reads and writes accounts owned by a user.
 type Repository struct {
@@ -19,14 +41,15 @@ func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db}
 }
 
-// List returns the user's accounts, newest first.
-func (r *Repository) List(ctx context.Context, userID string) ([]Account, error) {
+// List returns the user's accounts, newest first. Archived accounts are only
+// included when includeArchived is set.
+func (r *Repository) List(ctx context.Context, userID string, includeArchived bool) ([]Account, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+columns+`
 		FROM accounts
-		WHERE user_id = $1
+		WHERE user_id = $1 AND ($2 OR NOT is_archived)
 		ORDER BY created_at DESC
-	`, userID)
+	`, userID, includeArchived)
 	if err != nil {
 		return nil, err
 	}
@@ -34,53 +57,56 @@ func (r *Repository) List(ctx context.Context, userID string) ([]Account, error)
 
 	accounts := []Account{}
 	for rows.Next() {
-		var account Account
-		if err := rows.Scan(&account.ID, &account.Name, &account.Type, &account.Currency, &account.InitialBalance, &account.IsArchived, &account.CreatedAt); err != nil {
+		account, err := scan(rows)
+		if err != nil {
 			return nil, err
 		}
-		account.CurrentBalance = account.InitialBalance
 		accounts = append(accounts, account)
 	}
 	return accounts, rows.Err()
 }
 
-// Get returns one account, or sql.ErrNoRows when the user does not own it.
+// Get returns one account, or ErrNotFound when the user does not own it.
 func (r *Repository) Get(ctx context.Context, userID, id string) (Account, error) {
-	var account Account
-	err := r.db.QueryRowContext(ctx, `
+	account, err := scan(r.db.QueryRowContext(ctx, `
 		SELECT `+columns+`
 		FROM accounts
 		WHERE id = $1 AND user_id = $2
-	`, id, userID).Scan(&account.ID, &account.Name, &account.Type, &account.Currency, &account.InitialBalance, &account.IsArchived, &account.CreatedAt)
-	if err != nil {
-		return Account{}, err
+	`, id, userID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Account{}, ErrNotFound
 	}
-	account.CurrentBalance = account.InitialBalance
-	return account, nil
+	return account, err
 }
 
-// Create inserts an account and returns it with its generated id.
+// Create inserts an account and returns it.
 func (r *Repository) Create(ctx context.Context, userID string, req CreateRequest) (Account, error) {
-	account := Account{
-		Name:           req.Name,
-		Type:           req.Type,
-		Currency:       req.Currency,
-		InitialBalance: req.InitialBalance,
-	}
+	var id string
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO accounts (user_id, name, type, currency, initial_balance)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at
-	`, userID, req.Name, req.Type, req.Currency, req.InitialBalance).Scan(&account.ID, &account.CreatedAt)
+		SELECT $1, $2, $3, c.code, $5::numeric
+		FROM currencies c WHERE c.code = $4 AND c.is_active
+		RETURNING id
+	`, userID, req.Name, req.Type, req.Currency, string(req.InitialBalance)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Account{}, ErrUnknownCurrency
+	}
 	if err != nil {
 		return Account{}, err
 	}
-	account.CurrentBalance = account.InitialBalance
-	return account, nil
+	return r.Get(ctx, userID, id)
 }
 
-// Update applies the non-nil fields of req.
-func (r *Repository) Update(ctx context.Context, userID, id string, req UpdateRequest) error {
+// Update applies the non-nil fields of req. Changing the currency is only
+// allowed while the account has no transactions, since existing amounts were
+// recorded in the old currency.
+func (r *Repository) Update(ctx context.Context, userID string, existing Account, req UpdateRequest) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	update := database.NewUpdate("accounts")
 	if req.Name != nil {
 		update.Set("name", *req.Name)
@@ -88,26 +114,67 @@ func (r *Repository) Update(ctx context.Context, userID, id string, req UpdateRe
 	if req.Type != nil {
 		update.Set("type", *req.Type)
 	}
-	if req.Currency != nil {
+	if req.Currency != nil && *req.Currency != existing.Currency {
+		var used, known bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT
+				EXISTS (SELECT 1 FROM transactions WHERE (account_id = $1 OR to_account_id = $1) AND deleted_at IS NULL),
+				EXISTS (SELECT 1 FROM currencies WHERE code = $2 AND is_active)
+		`, existing.ID, *req.Currency).Scan(&used, &known); err != nil {
+			return err
+		}
+		if used {
+			return ErrCurrencyLocked
+		}
+		if !known {
+			return ErrUnknownCurrency
+		}
 		update.Set("currency", *req.Currency)
 	}
 	if req.InitialBalance != nil {
-		update.Set("initial_balance", *req.InitialBalance)
+		update.Set("initial_balance", string(*req.InitialBalance))
 	}
 	if req.IsArchived != nil {
 		update.Set("is_archived", *req.IsArchived)
 	}
+	if update.Empty() {
+		return nil
+	}
 
-	query, args := update.Build(id, userID)
-	_, err := r.db.ExecContext(ctx, query, args...)
-	return err
+	query, args := update.Build(existing.ID, userID)
+	result, err := tx.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
 }
 
-// Archive soft-deletes an account by flagging it archived.
+// Archive soft-deletes an account by flagging it archived, returning
+// ErrNotFound when the user does not own it.
 func (r *Repository) Archive(ctx context.Context, userID, id string) error {
-	_, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE accounts SET is_archived = TRUE, updated_at = now()
 		WHERE id = $1 AND user_id = $2
 	`, id, userID)
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// scanner covers both *sql.Row and *sql.Rows.
+type scanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func scan(src scanner) (Account, error) {
+	var a Account
+	err := src.Scan(&a.ID, &a.Name, &a.Type, &a.Currency, &a.InitialBalance, &a.CurrentBalance, &a.IsArchived, &a.CreatedAt)
+	return a, err
 }

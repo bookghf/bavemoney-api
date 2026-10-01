@@ -10,6 +10,7 @@ type Category struct {
 	Type     string     `json:"type"`
 	Icon     string     `json:"icon,omitempty"`
 	Color    string     `json:"color,omitempty"`
+	IsSystem bool       `json:"is_system"`
 	Children []Category `json:"children,omitempty"`
 }
 
