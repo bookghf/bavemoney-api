@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // Repository reads and writes user records.
@@ -75,4 +76,78 @@ func (r *Repository) CurrencyExists(ctx context.Context, code string) (bool, err
 	var exists bool
 	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM currencies WHERE code = $1 AND is_active)`, code).Scan(&exists)
 	return exists, err
+}
+
+// ErrNotFound is returned when the user row no longer exists.
+var ErrNotFound = errors.New("user not found")
+
+// UpdateProfile applies the non-nil fields and returns the updated user.
+func (r *Repository) UpdateProfile(ctx context.Context, id string, req UpdateProfileRequest) (User, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE users SET
+			display_name = COALESCE($2, display_name),
+			default_currency = COALESCE($3, default_currency),
+			updated_at = now()
+		WHERE id = $1
+	`, id, req.DisplayName, req.DefaultCurrency)
+	if err != nil {
+		return User{}, err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return User{}, ErrNotFound
+	}
+	return r.ByID(ctx, id)
+}
+
+// PasswordHash returns the user's bcrypt hash.
+func (r *Repository) PasswordHash(ctx context.Context, id string) (string, error) {
+	var hash sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = $1`, id).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return hash.String, err
+}
+
+// SetPassword stores a new bcrypt hash.
+func (r *Repository) SetPassword(ctx context.Context, id, hash string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, id, hash)
+	return err
+}
+
+// ResetData deletes all of the user's ledger data in one database transaction,
+// keeping the user row and sessions. Children go first: transactions reference
+// accounts and categories without ON DELETE CASCADE; attachments cascade with
+// their transactions.
+func (r *Repository) ResetData(ctx context.Context, id string) (ResetCounts, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ResetCounts{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var counts ResetCounts
+	steps := []struct {
+		query string
+		count *int64
+	}{
+		{`DELETE FROM transactions WHERE user_id = $1`, &counts.Transactions},
+		{`DELETE FROM budgets WHERE user_id = $1`, &counts.Budgets},
+		{`DELETE FROM accounts WHERE user_id = $1`, &counts.Accounts},
+		{`DELETE FROM categories WHERE user_id = $1 AND parent_id IS NOT NULL`, &counts.Categories},
+		{`DELETE FROM categories WHERE user_id = $1`, nil},
+	}
+	for _, step := range steps {
+		result, err := tx.ExecContext(ctx, step.query, id)
+		if err != nil {
+			return ResetCounts{}, err
+		}
+		n, _ := result.RowsAffected()
+		if step.count != nil {
+			*step.count = n
+		} else {
+			counts.Categories += n
+		}
+	}
+	return counts, tx.Commit()
 }
