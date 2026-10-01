@@ -1,4 +1,8 @@
 // Package config loads runtime configuration from the environment.
+//
+// Credentials (DATABASE_URL, JWT_SECRET) have no defaults in code: they come
+// from the environment, which docker compose and LoadDotEnv fill from the
+// git-ignored .env file (see .env.example).
 package config
 
 import (
@@ -6,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -23,23 +28,18 @@ type Config struct {
 	CORSAllowedOrigins string
 }
 
-// minSecretLength is the shortest JWT secret accepted in production.
-const minSecretLength = 32
+// Minimum lengths for secrets in production.
+const (
+	minSecretLength     = 32
+	minDBPasswordLength = 16
+)
 
-// knownWeakSecrets are placeholder values that must never sign real tokens.
-var knownWeakSecrets = map[string]bool{
-	"<jwt-secret>": true,
-	"<dev-jwt-secret>":      true,
-	"secret":                  true,
-}
-
-// Load reads configuration from the environment, falling back to
-// development-friendly defaults.
+// Load reads configuration from the environment.
 func Load() Config {
 	cfg := Config{
 		Env:                env("APP_ENV", "development"),
 		Port:               env("PORT", "8080"),
-		DatabaseURL:        env("DATABASE_URL", "postgres://ledger:<db-password>@localhost:5432/ledger?sslmode=disable"),
+		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
 		CORSAllowedOrigins: os.Getenv("CORS_ALLOWED_ORIGINS"),
 	}
@@ -59,20 +59,25 @@ func Load() Config {
 // Production reports whether the API runs with production safeguards.
 func (c Config) Production() bool { return c.Env == "production" }
 
-// Validate rejects settings that are unsafe in production.
+// Validate rejects missing settings, and settings that are unsafe in production.
 func (c Config) Validate() error {
+	if c.DatabaseURL == "" {
+		return errors.New("DATABASE_URL is not set: copy .env.example to .env and fill it in")
+	}
 	if !c.Production() {
 		return nil
 	}
 	var problems []string
-	if len(c.JWTSecret) < minSecretLength || knownWeakSecrets[c.JWTSecret] {
+	if len(c.JWTSecret) < minSecretLength {
 		problems = append(problems, "JWT_SECRET must be a random value of at least 32 characters")
 	}
 	if c.CORSAllowedOrigins == "" || strings.Contains(c.CORSAllowedOrigins, "*") {
 		problems = append(problems, "CORS_ALLOWED_ORIGINS must list explicit origins")
 	}
-	if strings.Contains(c.DatabaseURL, "<db-password>") {
-		problems = append(problems, "DATABASE_URL uses the development password")
+	if parsed, err := url.Parse(c.DatabaseURL); err != nil {
+		problems = append(problems, "DATABASE_URL is not a valid URL")
+	} else if password, _ := parsed.User.Password(); len(password) < minDBPasswordLength {
+		problems = append(problems, "the DATABASE_URL password must be at least 16 characters")
 	}
 	if len(problems) > 0 {
 		return errors.New("unsafe production config: " + strings.Join(problems, "; "))

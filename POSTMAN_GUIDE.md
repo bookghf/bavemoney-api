@@ -17,6 +17,8 @@ Before making requests, configure these variables in Postman:
 | Variable | Value | Description |
 |----------|-------|-------------|
 | `base_url` | `http://localhost:8080` | API server URL |
+| `user_email` / `user_password` | (empty) | Login used by Register and Login |
+| `admin_email` / `admin_password` | (empty) | Admin login used by Admin Login |
 | `access_token` | (empty) | JWT access token - fill after login |
 | `refresh_token` | (empty) | Refresh token - fill after login |
 | `admin_access_token` | (empty) | Admin JWT token - fill after admin login |
@@ -25,6 +27,10 @@ Before making requests, configure these variables in Postman:
 | `category_id` | (empty) | Category ID - fill with test category ID |
 | `budget_id` | (empty) | Budget ID - fill with test budget ID |
 | `user_id` | (empty) | User ID - fill with test user ID |
+
+Keep logins and tokens in a local Postman **environment** (its "Current value"
+column is never synced or exported), not in the collection file, so they can not
+end up in git.
 
 **To set variables:**
 1. Click the **Environment** icon (eye) in the top-right

@@ -21,6 +21,10 @@ import (
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 
+	// Outside Docker, read credentials from the git-ignored .env file.
+	if err := config.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("load .env: %v", err)
+	}
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
 		log.Fatal(err)

@@ -1,0 +1,6 @@
+# Never bake local credentials or build output into images.
+.env
+.env.*
+!.env.example
+.git
+bin/

@@ -6,7 +6,7 @@
 //	docker compose up -d db
 //	go test -tags integration ./internal/integration/
 //
-// DATABASE_URL defaults to the docker compose database. Every test works with
+// DATABASE_URL comes from the environment or money-api/.env. Every test works with
 // throwaway users (qa-it+…@example.com) and deletes them afterwards.
 package integration
 
@@ -37,9 +37,15 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	// Same git-ignored .env as docker compose (tests run in this directory).
+	if err := config.LoadDotEnv("../../.env"); err != nil {
+		fmt.Fprintln(os.Stderr, "load .env:", err)
+		os.Exit(1)
+	}
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
-		url = "postgres://ledger:<db-password>@localhost:5432/ledger?sslmode=disable"
+		fmt.Fprintln(os.Stderr, "integration tests need DATABASE_URL (set it in money-api/.env)")
+		os.Exit(1)
 	}
 	var err error
 	if db, err = database.Connect(url); err != nil {
@@ -50,7 +56,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "migrate:", err)
 		os.Exit(1)
 	}
-	handler = server.Router(config.Config{JWTSecret: "<test-jwt-secret>", CORSAllowedOrigins: "*"}, db)
+	// A fresh signing key per run; tokens only live for the test process.
+	handler = server.Router(config.Config{JWTSecret: newEmail(), CORSAllowedOrigins: "*"}, db)
 	code := m.Run()
 	cleanup()
 	os.Exit(code)

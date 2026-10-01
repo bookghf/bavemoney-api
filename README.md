@@ -4,20 +4,29 @@ This workspace now contains a starter Docker + PostgreSQL + Go API setup based o
 
 ## Run with Docker Compose
 
-Secrets live in a git-ignored `.env` next to `docker-compose.yml`:
+Every credential lives in a git-ignored `.env` next to `docker-compose.yml`;
+none has a default in the code. Copy the template and fill in the empty values:
 
 ```bash
 cp .env.example .env
-echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
+openssl rand -hex 24   # paste as POSTGRES_PASSWORD (and into DATABASE_URL)
+openssl rand -hex 32   # paste as JWT_SECRET
 docker compose up --build
 ```
+
+`docker compose`, `go run ./cmd/api`, and the integration tests all read the
+same `.env`. `.dockerignore` keeps it out of the image.
 
 Services:
 - PostgreSQL: localhost:5432 (bound to 127.0.0.1 only)
 - API: http://localhost:8080
 
-`APP_ENV=production` makes the API refuse to start with a weak `JWT_SECRET`,
-the development database password, or `CORS_ALLOWED_ORIGINS=*`.
+`APP_ENV=production` makes the API refuse to start with a short `JWT_SECRET`
+or database password, or with `CORS_ALLOWED_ORIGINS=*`.
+
+The Postgres password only takes effect when the volume is first created. To
+change it later, run `ALTER USER ledger WITH PASSWORD '…'` in the database and
+update `.env`.
 
 ## Database migrations
 
@@ -31,7 +40,7 @@ idempotent so they also apply on a freshly bootstrapped database.
 ```bash
 go test ./...                                   # unit tests
 docker compose up -d db
-go test -tags integration ./internal/integration/   # end-to-end against Postgres
+go test -tags integration ./internal/integration/   # end-to-end; reads DATABASE_URL from .env
 ```
 
 The integration suite creates throwaway `qa-it+…@example.com` users and
