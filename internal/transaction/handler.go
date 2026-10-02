@@ -105,10 +105,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, userID string) {
 // spec's defaults (page 1, limit 20, max 100).
 func parseListFilter(query url.Values) (ListFilter, error) {
 	filter := ListFilter{
-		Page:       1,
-		Limit:      defaultLimit,
-		AccountID:  query.Get("account"),
-		CategoryID: query.Get("category"),
+		Page:  1,
+		Limit: defaultLimit,
+		// account/category, or account_id/category_id as reports name them.
+		AccountID:  firstOf(query, "account", "account_id"),
+		CategoryID: firstOf(query, "category", "category_id"),
 		Type:       query.Get("type"),
 		Search:     strings.TrimSpace(query.Get("search")),
 		Sort:       query.Get("sort"),
@@ -139,6 +140,11 @@ func parseListFilter(query url.Values) (ListFilter, error) {
 	if filter.Page > maxPage {
 		return ListFilter{}, errors.New("page is too large")
 	}
+	if filter.Sort != "" {
+		if _, ok := sortColumns[strings.TrimPrefix(filter.Sort, "-")]; !ok {
+			return ListFilter{}, errors.New("sort must be occurred_at, amount, or created_at, optionally prefixed with -")
+		}
+	}
 
 	// from/to are whole days in tz (default UTC), matching how reports
 	// bucket transactions into days.
@@ -160,6 +166,9 @@ func parseListFilter(query url.Values) (ListFilter, error) {
 		}
 		filter.ToTime = time.Date(day.Year(), day.Month(), day.Day()+1, 0, 0, 0, 0, loc)
 	}
+	if !filter.FromTime.IsZero() && !filter.ToTime.IsZero() && !filter.FromTime.Before(filter.ToTime) {
+		return ListFilter{}, errors.New("from must not be after to")
+	}
 	for _, tag := range strings.Split(query.Get("tags"), ",") {
 		if tag = strings.TrimSpace(tag); tag != "" {
 			filter.Tags = append(filter.Tags, tag)
@@ -173,7 +182,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if err := validateCreate(req); err != nil {
+	if err := validateCreate(&req); err != nil {
 		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -194,6 +203,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 const (
 	maxNoteLength = 500
 	maxTags       = 20
+	maxTagLength  = 50
 )
 
 const amountError = "amount must be a positive decimal with at most 2 decimal places and 16 digits"
@@ -202,19 +212,20 @@ const amountError = "amount must be a positive decimal with at most 2 decimal pl
 // income and expense take their account's currency (a different one is
 // rejected), and a transfer takes the shared currency of its two accounts. A
 // transfer can not have a category.
-func validateCreate(req CreateRequest) error {
+func validateCreate(req *CreateRequest) error {
 	if req.AccountID == "" || req.Type == "" || req.OccurredAt == "" {
 		return errors.New("account_id, type, and occurred_at are required")
 	}
 	if !validate.UUID(req.AccountID) {
 		return errors.New("account_id must be a UUID")
 	}
-	if !validate.Amount(req.Amount) {
+	if !validate.Amount(string(req.Amount)) {
 		return errors.New(amountError)
 	}
 	if _, ok := validate.Timestamp(req.OccurredAt); !ok {
 		return errors.New("occurred_at must be an RFC 3339 timestamp, e.g. 2026-09-25T10:00:00+07:00")
 	}
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
 	if req.Currency != "" && !validate.Currency(req.Currency) {
 		return errors.New("currency must be a 3-letter code such as THB")
 	}
@@ -250,11 +261,16 @@ func validateCreate(req CreateRequest) error {
 }
 
 func validateText(note string, tags []string) error {
-	if len([]rune(note)) > maxNoteLength {
-		return errors.New("note must be at most 500 characters")
+	if err := validate.FreeText(note, maxNoteLength, "note"); err != nil {
+		return err
 	}
 	if len(tags) > maxTags {
 		return errors.New("at most 20 tags are allowed")
+	}
+	for _, tag := range tags {
+		if err := validate.Name(tag, maxTagLength, "tag"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -263,7 +279,7 @@ func validateText(note string, tags []string) error {
 // switch between income and expense, but never into or out of a transfer,
 // since that would need a receiving account added or removed.
 func validateUpdate(existing Transaction, req UpdateRequest) error {
-	if req.Amount != nil && !validate.Amount(*req.Amount) {
+	if req.Amount != nil && !validate.Amount(string(*req.Amount)) {
 		return errors.New(amountError)
 	}
 	if req.OccurredAt != nil {
@@ -369,4 +385,14 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, userID, id stri
 		"message": "Transaction deleted",
 		"id":      id,
 	})
+}
+
+// firstOf returns the first non-empty query value among keys.
+func firstOf(query url.Values, keys ...string) string {
+	for _, key := range keys {
+		if value := query.Get(key); value != "" {
+			return value
+		}
+	}
+	return ""
 }

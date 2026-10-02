@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // Repository reads and writes user records.
@@ -127,11 +128,17 @@ func (r *Repository) ResetData(ctx context.Context, id string) (ResetCounts, err
 	defer func() { _ = tx.Rollback() }()
 
 	var counts ResetCounts
+	// Report what the user could see: soft-deleted rows are purged too, but
+	// they were already gone from the app.
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM transactions WHERE user_id = $1 AND deleted_at IS NULL`, id).
+		Scan(&counts.Transactions); err != nil {
+		return ResetCounts{}, err
+	}
 	steps := []struct {
 		query string
 		count *int64
 	}{
-		{`DELETE FROM transactions WHERE user_id = $1`, &counts.Transactions},
+		{`DELETE FROM transactions WHERE user_id = $1`, nil},
 		{`DELETE FROM budgets WHERE user_id = $1`, &counts.Budgets},
 		{`DELETE FROM accounts WHERE user_id = $1`, &counts.Accounts},
 		{`DELETE FROM categories WHERE user_id = $1 AND parent_id IS NOT NULL`, &counts.Categories},
@@ -143,9 +150,10 @@ func (r *Repository) ResetData(ctx context.Context, id string) (ResetCounts, err
 			return ResetCounts{}, err
 		}
 		n, _ := result.RowsAffected()
-		if step.count != nil {
+		switch {
+		case step.count != nil:
 			*step.count = n
-		} else {
+		case strings.Contains(step.query, "categories"):
 			counts.Categories += n
 		}
 	}

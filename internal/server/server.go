@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"time"
 
@@ -53,6 +54,9 @@ var credentialPaths = []string{
 // Router builds the API router.
 func Router(cfg config.Config, db *sql.DB) http.Handler {
 	authenticator := auth.New(cfg.JWTSecret)
+	if db != nil {
+		authenticator.CheckAccountStatus(accountStatus(db))
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", health(db))
@@ -75,6 +79,21 @@ func Router(cfg config.Config, db *sql.DB) http.Handler {
 
 	limiter := newRateLimiter(20, 20)
 	return observe(cors(splitOrigins(cfg.CORSAllowedOrigins), limiter.limit(credentialPaths, mux)))
+}
+
+// accountStatus reads a user's status for auth.Authenticator.
+func accountStatus(db *sql.DB) auth.AccountStatus {
+	return func(ctx context.Context, userID string) (bool, bool, error) {
+		var status string
+		err := db.QueryRowContext(ctx, `SELECT status FROM users WHERE id = $1`, userID).Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, false, nil
+		}
+		if err != nil {
+			return false, false, err
+		}
+		return true, status == "active", nil
+	}
 }
 
 // health reports "ok" only when the database answers, so orchestrators stop

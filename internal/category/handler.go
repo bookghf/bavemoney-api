@@ -8,6 +8,7 @@ import (
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/validate"
 )
 
 const basePath = "/api/v1/categories"
@@ -82,8 +83,12 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len([]rune(req.Name)) > 50 {
-		httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
+	if req.Name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := validate.Name(req.Name, 50, "name"); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Type != "income" && req.Type != "expense" {
@@ -130,8 +135,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 	}
 	if req.Name != nil {
 		trimmed := strings.TrimSpace(*req.Name)
-		if trimmed == "" || len([]rune(trimmed)) > 50 {
-			httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
+		if trimmed == "" {
+			httpx.WriteError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if err := validate.Name(trimmed, 50, "name"); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		req.Name = &trimmed

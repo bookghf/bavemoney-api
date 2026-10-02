@@ -18,9 +18,6 @@ import (
 // primary market is Thailand.
 const defaultCurrency = "THB"
 
-// minPasswordLength is the shortest password register accepts.
-const minPasswordLength = 8
-
 // statusActive is the only account status allowed to sign in.
 const statusActive = "active"
 
@@ -57,11 +54,15 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "email is not valid")
 		return
 	}
-	if len(creds.Password) < minPasswordLength {
-		httpx.WriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validate.Password(creds.Password); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	creds.DisplayName = strings.TrimSpace(creds.DisplayName)
+	if err := validate.Name(creds.DisplayName, maxDisplayName, "display name"); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	creds.DefaultCurrency = strings.ToUpper(strings.TrimSpace(creds.DefaultCurrency))
 	if creds.DefaultCurrency == "" {
 		creds.DefaultCurrency = defaultCurrency
@@ -304,8 +305,8 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request, userID s
 	}
 	if req.DisplayName != nil {
 		name := strings.TrimSpace(*req.DisplayName)
-		if len([]rune(name)) > maxDisplayName {
-			httpx.WriteError(w, http.StatusBadRequest, "display name must be at most 60 characters")
+		if err := validate.Name(name, maxDisplayName, "display name"); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		req.DisplayName = &name
@@ -352,8 +353,8 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.NewPassword) < minPasswordLength {
-		httpx.WriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validate.Password(req.NewPassword); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

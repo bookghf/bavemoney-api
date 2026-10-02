@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
@@ -41,10 +42,22 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// AccountStatus looks up whether a user still exists and is active.
+type AccountStatus func(ctx context.Context, userID string) (exists, active bool, err error)
+
 // Authenticator signs and verifies tokens with HMAC secrets.
 type Authenticator struct {
 	userKey  []byte
 	adminKey []byte
+	// status, when set, is checked on every authenticated request, so a
+	// suspended or deleted user loses access at once instead of keeping it
+	// until their access token expires.
+	status AccountStatus
+}
+
+// CheckAccountStatus makes Require reject suspended and deleted users.
+func (a *Authenticator) CheckAccountStatus(status AccountStatus) {
+	a.status = status
 }
 
 // New returns an Authenticator backed by secret. The admin signing key is
@@ -117,12 +130,26 @@ func (a *Authenticator) Admin(r *http.Request) (*Claims, error) {
 }
 
 // Require resolves the caller's user id, writing a 401 response when the
-// request is not authenticated.
+// request is not authenticated and a 403 when the account is suspended.
 func (a *Authenticator) Require(w http.ResponseWriter, r *http.Request) (string, bool) {
 	userID, err := a.UserID(r)
 	if err != nil {
 		httpx.WriteError(w, http.StatusUnauthorized, err.Error())
 		return "", false
+	}
+	if a.status != nil {
+		exists, active, err := a.status(r.Context(), userID)
+		switch {
+		case err != nil:
+			httpx.WriteError(w, http.StatusInternalServerError, "could not check account")
+			return "", false
+		case !exists:
+			httpx.WriteError(w, http.StatusUnauthorized, "invalid token")
+			return "", false
+		case !active:
+			httpx.WriteError(w, http.StatusForbidden, "this account is suspended")
+			return "", false
+		}
 	}
 	return userID, true
 }

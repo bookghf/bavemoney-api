@@ -1,6 +1,8 @@
 // Package budget owns per-period spending limits.
 package budget
 
+import "ledger-api/internal/validate"
+
 // Budget periods.
 var periods = map[string]bool{"weekly": true, "monthly": true, "yearly": true}
 
@@ -31,19 +33,19 @@ type Budget struct {
 
 // CreateRequest is the POST /budgets payload.
 type CreateRequest struct {
-	CategoryID        string `json:"category_id,omitempty"`
-	Amount            string `json:"amount"`
-	Currency          string `json:"currency"`
-	Period            string `json:"period"`
-	StartDate         string `json:"start_date"`
-	AlertThresholdPct int    `json:"alert_threshold_pct,omitempty"`
+	CategoryID        string           `json:"category_id,omitempty"`
+	Amount            validate.Decimal `json:"amount"`
+	Currency          string           `json:"currency"`
+	Period            string           `json:"period"`
+	StartDate         string           `json:"start_date"`
+	AlertThresholdPct int              `json:"alert_threshold_pct,omitempty"`
 }
 
 // UpdateRequest is the PATCH /budgets/{id} payload; nil fields are left alone.
 type UpdateRequest struct {
-	Amount            *string `json:"amount"`
-	Period            *string `json:"period"`
-	AlertThresholdPct *int    `json:"alert_threshold_pct,omitempty"`
+	Amount            *validate.Decimal `json:"amount"`
+	Period            *string           `json:"period"`
+	AlertThresholdPct *int              `json:"alert_threshold_pct,omitempty"`
 }
 
 // Empty reports whether the request carries no field to update.

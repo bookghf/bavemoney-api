@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 )
@@ -32,6 +33,32 @@ func TestUserAndAdminTokensAreNotInterchangeable(t *testing.T) {
 	}
 	if _, err := a.UserID(r); err == nil {
 		t.Fatal("admin token accepted as user token")
+	}
+}
+
+func TestRequireChecksAccountStatus(t *testing.T) {
+	a := New("test-secret")
+	token, _ := a.IssueAccessToken("user-1", "u@example.com")
+	call := func() int {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		a.Require(w, r)
+		return w.Code
+	}
+
+	for name, tc := range map[string]struct {
+		exists, active bool
+		want           int
+	}{
+		"active":    {true, true, 200},
+		"suspended": {true, false, 403},
+		"deleted":   {false, false, 401},
+	} {
+		a.CheckAccountStatus(func(context.Context, string) (bool, bool, error) { return tc.exists, tc.active, nil })
+		if got := call(); got != tc.want {
+			t.Errorf("%s: status %d, want %d", name, got, tc.want)
+		}
 	}
 }
 

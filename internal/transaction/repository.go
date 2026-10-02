@@ -217,7 +217,7 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 		database.NullIfEmpty(req.ToAccountID),
 		database.NullIfEmpty(req.CategoryID),
 		req.Type,
-		req.Amount,
+		string(req.Amount),
 		currency,
 		database.NullIfEmpty(req.Note),
 		pq.StringArray(req.Tags),
@@ -317,7 +317,7 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Transac
 		update.Set("type", *req.Type)
 	}
 	if req.Amount != nil {
-		update.Set("amount", *req.Amount)
+		update.Set("amount", string(*req.Amount))
 	}
 	if req.Note != nil {
 		update.Set("note", database.NullIfEmpty(*req.Note))
