@@ -446,12 +446,21 @@ Update an existing transaction. Only the provided fields are changed.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| category_id | uuid | |
+| account_id | uuid | Moves the transaction (a transfer's sending side). The transaction takes that account's currency. |
+| to_account_id | uuid | A transfer's receiving account. Required when changing `type` to `transfer`; must be empty (or omitted) otherwise. |
+| category_id | uuid | `""` clears it. Must match the resulting type; transfers can not have one. |
 | type | string | `income`, `expense`, `transfer` |
 | amount | string | Positive decimal |
 | note | string | Max 500 chars |
 | tags | string[] | Replaces the entire tags array |
 | occurred_at | datetime | |
+
+Type and account changes:
+- Income and expense switch freely; send a `category_id` of the new type (or `""`), since a category of the old type is rejected.
+- Converting to a transfer needs `to_account_id` (an open account of the same currency, not the sending account) and drops the category.
+- Converting a transfer to income or expense drops `to_account_id`.
+- A newly used account must belong to the user and must not be archived; an archived account the transaction already uses may stay.
+- Balances are derived from the transaction rows, so they follow every change exactly.
 
 **Response: `200 OK`** — returns the updated transaction object.
 

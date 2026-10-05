@@ -278,9 +278,10 @@ func validateText(note string, tags []string) error {
 	return nil
 }
 
-// validateUpdate checks a PATCH against the stored transaction. The type can
-// switch between income and expense, but never into or out of a transfer,
-// since that would need a receiving account added or removed.
+// validateUpdate checks a PATCH against the stored transaction: the fields
+// themselves, then that the result is still a valid income, expense, or
+// transfer (see nextShape). The repository repeats the shape check against the
+// row it locks.
 func validateUpdate(existing Transaction, req UpdateRequest) error {
 	if req.Amount != nil && !validate.Amount(string(*req.Amount)) {
 		return errors.New(amountError)
@@ -304,18 +305,8 @@ func validateUpdate(existing Transaction, req UpdateRequest) error {
 	if err := validateText(note, tags); err != nil {
 		return err
 	}
-	if req.Type != nil && *req.Type != existing.Type {
-		if existing.Type == TypeTransfer || *req.Type == TypeTransfer {
-			return errors.New("can not change a transaction to or from a transfer")
-		}
-		if *req.Type != TypeIncome && *req.Type != TypeExpense {
-			return errors.New("type must be income or expense")
-		}
-	}
-	if existing.Type == TypeTransfer && req.CategoryID != nil && *req.CategoryID != "" {
-		return errors.New("transfers can not have a category")
-	}
-	return nil
+	_, err := nextShape(shapeOf(existing), req)
+	return err
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, userID, id string) {

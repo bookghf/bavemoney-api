@@ -140,11 +140,14 @@ var (
 
 // IsClientError reports whether err is one of the validation failures above.
 func IsClientError(err error) bool {
-	var currency *AccountCurrencyError
+	var (
+		currency *AccountCurrencyError
+		shape    *InvalidUpdateError
+	)
 	return errors.Is(err, ErrAccountNotFound) || errors.Is(err, ErrToAccountNotFound) ||
 		errors.Is(err, ErrAccountArchived) || errors.Is(err, ErrCurrencyMismatch) ||
 		errors.Is(err, ErrCategoryNotFound) || errors.Is(err, ErrCategoryType) ||
-		errors.As(err, &currency)
+		errors.As(err, &currency) || errors.As(err, &shape)
 }
 
 // AccountCurrencyError rejects an income/expense whose currency differs from
@@ -238,6 +241,13 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 // lockAccount share-locks an account the user owns and returns its currency.
 // notFound is returned when the user has no such account.
 func lockAccount(ctx context.Context, tx *sql.Tx, userID, accountID string, notFound error) (string, error) {
+	return lockAccountUnlessKnown(ctx, tx, userID, accountID, notFound, false)
+}
+
+// lockAccountUnlessKnown is lockAccount, except that an archived account is
+// accepted when known is set: an edit may keep a transaction on the archived
+// account it already uses, but not move one onto it.
+func lockAccountUnlessKnown(ctx context.Context, tx *sql.Tx, userID, accountID string, notFound error, known bool) (string, error) {
 	var (
 		currency string
 		archived bool
@@ -250,7 +260,7 @@ func lockAccount(ctx context.Context, tx *sql.Tx, userID, accountID string, notF
 		return "", notFound
 	case err != nil:
 		return "", err
-	case archived:
+	case archived && !known:
 		return "", ErrAccountArchived
 	}
 	return currency, nil
@@ -283,6 +293,11 @@ func convert(ctx context.Context, tx *sql.Tx, id string) error {
 
 // Update applies the non-nil fields of req to the transaction existing (as
 // loaded by Get), returning ErrNotFound when it disappeared meanwhile.
+//
+// The row is locked and re-read first, so the type and account checks apply
+// to its current state even when two edits race. Balances are derived from
+// the transaction rows, so moving a transaction between accounts or changing
+// its type keeps every balance exact as long as the row itself is valid.
 func (r *Repository) Update(ctx context.Context, userID string, existing Transaction, req UpdateRequest) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -290,31 +305,60 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Transac
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	newType := existing.Type
-	if req.Type != nil {
-		newType = *req.Type
+	var current shape
+	err = tx.QueryRowContext(ctx, `
+		SELECT type, account_id, COALESCE(to_account_id::text, ''), COALESCE(category_id::text, '')
+		FROM transactions WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE
+	`, existing.ID, userID).Scan(&current.Type, &current.AccountID, &current.ToAccountID, &current.CategoryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
 	}
-	// A new category, or a type change that keeps the old category, must
-	// still pair a category with a transaction of the same type.
-	categoryID := ""
-	if existing.Category != nil {
-		categoryID = existing.Category.ID
+	if err != nil {
+		return err
 	}
-	if req.CategoryID != nil {
-		categoryID = *req.CategoryID
-	}
-	if categoryID != "" && (req.CategoryID != nil || req.Type != nil) {
-		if err := checkCategory(ctx, tx, userID, categoryID, newType); err != nil {
-			return err
-		}
+	next, err := nextShape(current, req)
+	if err != nil {
+		return err
 	}
 
 	update := database.NewUpdate("transactions")
-	if req.CategoryID != nil {
-		update.Set("category_id", database.NullIfEmpty(*req.CategoryID))
+	if next.AccountID != current.AccountID || next.ToAccountID != current.ToAccountID {
+		// Accounts the transaction already uses may be archived; new ones
+		// may not. Either way the user must own them.
+		known := func(id string) bool { return id == current.AccountID || id == current.ToAccountID }
+		currency, err := lockAccountUnlessKnown(ctx, tx, userID, next.AccountID, ErrAccountNotFound, known(next.AccountID))
+		if err != nil {
+			return err
+		}
+		if next.ToAccountID != "" {
+			toCurrency, err := lockAccountUnlessKnown(ctx, tx, userID, next.ToAccountID, ErrToAccountNotFound, known(next.ToAccountID))
+			if err != nil {
+				return err
+			}
+			if toCurrency != currency {
+				return ErrCurrencyMismatch
+			}
+		}
+		// An account holds one currency, so the amount is in the (new)
+		// sending account's currency.
+		update.Set("account_id", next.AccountID)
+		update.Set("to_account_id", database.NullIfEmpty(next.ToAccountID))
+		update.Set("currency", currency)
 	}
-	if req.Type != nil {
-		update.Set("type", *req.Type)
+
+	// A new category, or a type change that keeps the old category, must
+	// still pair a category with a transaction of the same type.
+	if next.CategoryID != "" && (req.CategoryID != nil || next.Type != current.Type) {
+		if err := checkCategory(ctx, tx, userID, next.CategoryID, next.Type); err != nil {
+			return err
+		}
+	}
+	if next.CategoryID != current.CategoryID {
+		update.Set("category_id", database.NullIfEmpty(next.CategoryID))
+	}
+	if next.Type != current.Type {
+		update.Set("type", next.Type)
 	}
 	if req.Amount != nil {
 		update.Set("amount", string(*req.Amount))

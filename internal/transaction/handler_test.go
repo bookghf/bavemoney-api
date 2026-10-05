@@ -54,24 +54,46 @@ func TestValidateCreate(t *testing.T) {
 	}
 }
 
-func TestValidateUpdateKeepsTransfersTransfers(t *testing.T) {
-	income, transfer, cat := TypeIncome, TypeTransfer, category
+func TestValidateUpdateKeepsShapesValid(t *testing.T) {
+	income, expense, transfer, cat, empty, a, b, notUUID := TypeIncome, TypeExpense, TypeTransfer, category, "", accountA, accountB, "nope"
+	expenseTx := Transaction{Type: TypeExpense, AccountID: accountA, Category: &CategoryInfo{ID: category}}
+	transferTx := Transaction{Type: TypeTransfer, AccountID: accountA, ToAccountID: accountB}
 
-	if err := validateUpdate(Transaction{Type: TypeExpense}, UpdateRequest{Type: &income}); err != nil {
-		t.Errorf("expense -> income: %v", err)
+	tests := []struct {
+		name     string
+		existing Transaction
+		req      UpdateRequest
+		wantErr  bool
+	}{
+		{"expense -> income", expenseTx, UpdateRequest{Type: &income}, false},
+		{"move to another account", expenseTx, UpdateRequest{AccountID: &b}, false},
+		{"account not a uuid", expenseTx, UpdateRequest{AccountID: &notUUID}, true},
+		{"expense -> transfer", expenseTx, UpdateRequest{Type: &transfer, ToAccountID: &b}, false},
+		{"expense -> transfer drops its category", expenseTx, UpdateRequest{Type: &transfer, ToAccountID: &b, CategoryID: &empty}, false},
+		{"expense -> transfer without a target", expenseTx, UpdateRequest{Type: &transfer}, true},
+		{"expense -> transfer to itself", expenseTx, UpdateRequest{Type: &transfer, ToAccountID: &a}, true},
+		{"expense -> transfer with a category", expenseTx, UpdateRequest{Type: &transfer, ToAccountID: &b, CategoryID: &cat}, true},
+		{"to_account_id on an expense", expenseTx, UpdateRequest{ToAccountID: &b}, true},
+		{"transfer -> income", transferTx, UpdateRequest{Type: &income}, false},
+		{"transfer -> expense with a stale target", transferTx, UpdateRequest{Type: &expense, ToAccountID: &b}, true},
+		{"transfer -> expense clearing the target", transferTx, UpdateRequest{Type: &expense, ToAccountID: &empty}, false},
+		{"category on a transfer", transferTx, UpdateRequest{CategoryID: &cat}, true},
+		{"transfer onto its own target", transferTx, UpdateRequest{AccountID: &b}, true},
+		{"transfer swaps direction", transferTx, UpdateRequest{AccountID: &b, ToAccountID: &a}, false},
 	}
-	if err := validateUpdate(Transaction{Type: TypeExpense}, UpdateRequest{Type: &transfer}); err == nil {
-		t.Error("expense -> transfer: want error")
+	for _, tt := range tests {
+		if err := validateUpdate(tt.existing, tt.req); (err != nil) != tt.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", tt.name, err, tt.wantErr)
+		}
 	}
-	if err := validateUpdate(Transaction{Type: TypeTransfer}, UpdateRequest{Type: &income}); err == nil {
-		t.Error("transfer -> income: want error")
-	}
-	if err := validateUpdate(Transaction{Type: TypeTransfer}, UpdateRequest{CategoryID: &cat}); err == nil {
-		t.Error("category on transfer: want error")
-	}
+
 	bad := "2026-02-30T10:00:00Z"
-	if err := validateUpdate(Transaction{Type: TypeExpense}, UpdateRequest{OccurredAt: &bad}); err == nil {
+	if err := validateUpdate(expenseTx, UpdateRequest{OccurredAt: &bad}); err == nil {
 		t.Error("impossible occurred_at: want error")
+	}
+	refund := "refund"
+	if err := validateUpdate(expenseTx, UpdateRequest{Type: &refund}); err == nil {
+		t.Error("unknown type: want error")
 	}
 }
 
