@@ -12,6 +12,7 @@ import (
 	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
 	"ledger-api/internal/mail"
+	"ledger-api/internal/month"
 	"ledger-api/internal/validate"
 )
 
@@ -306,7 +307,7 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request, userID s
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if req.DisplayName == nil && req.DefaultCurrency == nil {
+	if req.DisplayName == nil && req.DefaultCurrency == nil && req.MonthStartDay == nil {
 		httpx.WriteError(w, http.StatusBadRequest, "no fields provided")
 		return
 	}
@@ -330,6 +331,10 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request, userID s
 			return
 		}
 		req.DefaultCurrency = &code
+	}
+	if req.MonthStartDay != nil && !month.ValidStartDay(*req.MonthStartDay) {
+		httpx.WriteError(w, http.StatusBadRequest, "month_start_day must be between 1 and 28")
+		return
 	}
 
 	updated, err := h.repo.UpdateProfile(r.Context(), userID, req)

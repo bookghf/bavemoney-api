@@ -20,7 +20,7 @@ func NewRepository(db *sql.DB) *Repository {
 
 // Create inserts an active user and returns it with its generated id.
 func (r *Repository) Create(ctx context.Context, email, passwordHash, displayName, defaultCurrency string) (User, error) {
-	user := User{Email: email, DisplayName: displayName, DefaultCurrency: defaultCurrency, Status: "active"}
+	user := User{Email: email, DisplayName: displayName, DefaultCurrency: defaultCurrency, MonthStartDay: 1, Status: "active"}
 	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO users (email, password_hash, display_name, default_currency, status)
 		VALUES ($1, $2, $3, $4, 'active')
@@ -41,12 +41,12 @@ func (r *Repository) ByEmail(ctx context.Context, email string) (User, string, e
 		displayName sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, password_hash, display_name, default_currency, status, created_at
+		SELECT id, password_hash, display_name, default_currency, month_start_day, status, created_at
 		FROM users
 		WHERE lower(email) = $1
 		ORDER BY created_at
 		LIMIT 1
-	`, email).Scan(&user.ID, &hash, &displayName, &user.DefaultCurrency, &user.Status, &user.CreatedAt)
+	`, email).Scan(&user.ID, &hash, &displayName, &user.DefaultCurrency, &user.MonthStartDay, &user.Status, &user.CreatedAt)
 	if err != nil {
 		return User{}, "", err
 	}
@@ -62,10 +62,10 @@ func (r *Repository) ByID(ctx context.Context, id string) (User, error) {
 		displayName sql.NullString
 	)
 	err := r.db.QueryRowContext(ctx, `
-		SELECT email, display_name, default_currency, status, created_at
+		SELECT email, display_name, default_currency, month_start_day, status, created_at
 		FROM users
 		WHERE id = $1
-	`, id).Scan(&user.Email, &displayName, &user.DefaultCurrency, &user.Status, &user.CreatedAt)
+	`, id).Scan(&user.Email, &displayName, &user.DefaultCurrency, &user.MonthStartDay, &user.Status, &user.CreatedAt)
 	if err != nil {
 		return User{}, err
 	}
@@ -89,9 +89,10 @@ func (r *Repository) UpdateProfile(ctx context.Context, id string, req UpdatePro
 		UPDATE users SET
 			display_name = COALESCE($2, display_name),
 			default_currency = COALESCE($3, default_currency),
+			month_start_day = COALESCE($4, month_start_day),
 			updated_at = now()
 		WHERE id = $1
-	`, id, req.DisplayName, req.DefaultCurrency)
+	`, id, req.DisplayName, req.DefaultCurrency, req.MonthStartDay)
 	if err != nil {
 		return User{}, err
 	}

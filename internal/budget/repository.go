@@ -9,10 +9,11 @@ import (
 	"ledger-api/internal/database"
 )
 
-const columns = `b.id, b.category_id, c.name, c.icon, c.color, b.amount::text, b.currency, b.period, b.start_date::text, b.alert_threshold_pct, b.created_at`
+const columns = `b.id, b.category_id, c.name, c.icon, c.color, b.amount::text, b.currency, b.period, b.start_date::text, b.alert_threshold_pct, b.created_at, u.month_start_day`
 
 const from = `
 	FROM budgets b
+	JOIN users u ON u.id = b.user_id
 	LEFT JOIN categories c ON c.id = b.category_id`
 
 // Errors surfaced to the caller.
@@ -89,7 +90,7 @@ func (r *Repository) fillProgress(ctx context.Context, userID string, b *Budget,
 	}
 	now := time.Now().In(loc)
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	windowFrom, windowTo := currentWindow(start, b.Period, today)
+	windowFrom, windowTo := currentWindow(start, b.Period, today, b.monthStartDay)
 	b.PeriodStart = windowFrom.Format(time.DateOnly)
 	b.PeriodEnd = windowTo.AddDate(0, 0, -1).Format(time.DateOnly)
 
@@ -213,7 +214,7 @@ func scan(src scanner) (Budget, error) {
 		b                                     Budget
 		categoryID, categoryName, icon, color sql.NullString
 	)
-	if err := src.Scan(&b.ID, &categoryID, &categoryName, &icon, &color, &b.Amount, &b.Currency, &b.Period, &b.StartDate, &b.AlertThresholdPct, &b.CreatedAt); err != nil {
+	if err := src.Scan(&b.ID, &categoryID, &categoryName, &icon, &color, &b.Amount, &b.Currency, &b.Period, &b.StartDate, &b.AlertThresholdPct, &b.CreatedAt, &b.monthStartDay); err != nil {
 		return Budget{}, err
 	}
 	if categoryID.Valid {
