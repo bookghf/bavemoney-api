@@ -22,7 +22,17 @@ Services:
 - API: http://localhost:8080
 
 `APP_ENV=production` makes the API refuse to start with a short `JWT_SECRET`
-or database password, or with `CORS_ALLOWED_ORIGINS=*`.
+or database password, with `CORS_ALLOWED_ORIGINS=*`, or without
+`RESEND_API_KEY` and `MAIL_FROM`.
+
+## Forgot password
+
+`POST /api/v1/auth/forgot-password` emails a 6-digit code (15 minutes, 5 tries,
+at most one email a minute) and answers the same whether or not the email has
+an account. `POST /api/v1/auth/reset-password` takes `email`, `code`, and
+`new_password`, signs out every device, and returns a fresh session. Emails go
+through Resend; without `RESEND_API_KEY` (development) the API logs each email,
+code included, instead.
 
 The Postgres password only takes effect when the volume is first created. To
 change it later, run `ALTER USER ledger WITH PASSWORD '…'` in the database and

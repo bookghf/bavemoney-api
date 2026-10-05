@@ -1,7 +1,11 @@
 // Package transaction owns ledger entries against accounts.
 package transaction
 
-import "time"
+import (
+	"time"
+
+	"ledger-api/internal/validate"
+)
 
 // Transaction types.
 const (
@@ -13,6 +17,8 @@ const (
 type CategoryInfo struct {
 	ID     string        `json:"id"`
 	Name   string        `json:"name"`
+	Icon   string        `json:"icon,omitempty"`
+	Color  string        `json:"color,omitempty"`
 	Parent *CategoryInfo `json:"parent,omitempty"`
 }
 
@@ -64,23 +70,24 @@ type ListFilter struct {
 // CreateRequest is the POST /transactions payload. A transfer (type
 // "transfer") moves the amount from AccountID to ToAccountID.
 type CreateRequest struct {
-	AccountID   string   `json:"account_id"`
-	ToAccountID string   `json:"to_account_id,omitempty"`
-	CategoryID  string   `json:"category_id,omitempty"`
-	Type        string   `json:"type"`
-	Amount      string   `json:"amount"`
-	Currency    string   `json:"currency"`
-	Note        string   `json:"note,omitempty"`
-	Tags        []string `json:"tags"`
-	OccurredAt  string   `json:"occurred_at"`
+	AccountID   string `json:"account_id"`
+	ToAccountID string `json:"to_account_id,omitempty"`
+	CategoryID  string `json:"category_id,omitempty"`
+	Type        string `json:"type"`
+	// Amount accepts "12.50" or 12.5; see validate.Decimal.
+	Amount     validate.Decimal `json:"amount"`
+	Currency   string           `json:"currency"`
+	Note       string           `json:"note,omitempty"`
+	Tags       []string         `json:"tags"`
+	OccurredAt string           `json:"occurred_at"`
 }
 
 // UpdateRequest is the PATCH /transactions/{id} payload; nil fields are left alone.
 type UpdateRequest struct {
-	CategoryID *string `json:"category_id,omitempty"`
-	Type       *string `json:"type,omitempty"`
-	Amount     *string `json:"amount,omitempty"`
-	Note       *string `json:"note,omitempty"`
+	CategoryID *string           `json:"category_id,omitempty"`
+	Type       *string           `json:"type,omitempty"`
+	Amount     *validate.Decimal `json:"amount,omitempty"`
+	Note       *string           `json:"note,omitempty"`
 	// Tags replaces the tag list when present; [] clears it.
 	Tags       *[]string `json:"tags,omitempty"`
 	OccurredAt *string   `json:"occurred_at,omitempty"`

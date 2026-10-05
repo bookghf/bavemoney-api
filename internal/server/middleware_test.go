@@ -42,6 +42,23 @@ func TestLimitOnlyGuardsCredentialPosts(t *testing.T) {
 	}
 }
 
+func TestLimitBucketsAreSeparatePerEndpoint(t *testing.T) {
+	l := newRateLimiter(1, 1)
+	handler := l.limit([]string{"/api/v1/auth/login", "/api/v1/me/reset"}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	call := func(path string) int {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		return rec.Code
+	}
+	call("/api/v1/me/reset")
+	if got := call("/api/v1/me/reset"); got != http.StatusTooManyRequests {
+		t.Fatalf("second reset = %d, want 429", got)
+	}
+	if got := call("/api/v1/auth/login"); got != http.StatusOK {
+		t.Errorf("login after reset abuse = %d, want 200 (separate bucket)", got)
+	}
+}
+
 func TestObserveRecoversPanics(t *testing.T) {
 	handler := observe(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("boom") }))
 	rec := httptest.NewRecorder()

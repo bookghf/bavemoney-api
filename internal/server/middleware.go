@@ -111,12 +111,14 @@ func (l *rateLimiter) allow(key string, now time.Time) bool {
 	return true
 }
 
-// limit applies the limiter to requests whose path starts with one of prefixes.
+// limit applies the limiter to POSTs whose path starts with one of prefixes.
+// Each endpoint has its own bucket per client, so hammering one (say, a reset
+// with wrong passwords) can not lock everyone on that IP out of logging in.
 func (l *rateLimiter) limit(prefixes []string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(r.URL.Path, prefix) && r.Method == http.MethodPost {
-				if !l.allow(clientIP(r), time.Now()) {
+				if !l.allow(clientIP(r)+"|"+prefix, time.Now()) {
 					w.Header().Set("Retry-After", "60")
 					httpx.WriteError(w, http.StatusTooManyRequests, "too many attempts, try again in a minute")
 					return

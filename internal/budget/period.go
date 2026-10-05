@@ -62,7 +62,7 @@ func validateCreate(req *CreateRequest) error {
 	if req.CategoryID != "" && !validate.UUID(req.CategoryID) {
 		return errors.New("category_id must be a UUID")
 	}
-	if !validate.Amount(req.Amount) {
+	if !validate.Amount(string(req.Amount)) {
 		return errors.New("amount must be a positive decimal with at most 2 decimal places")
 	}
 	if !validate.Currency(req.Currency) {
@@ -81,7 +81,7 @@ func validateCreate(req *CreateRequest) error {
 }
 
 func validateUpdate(req UpdateRequest) error {
-	if req.Amount != nil && !validate.Amount(*req.Amount) {
+	if req.Amount != nil && !validate.Amount(string(*req.Amount)) {
 		return errors.New("amount must be a positive decimal with at most 2 decimal places")
 	}
 	if req.Period != nil && !periods[*req.Period] {

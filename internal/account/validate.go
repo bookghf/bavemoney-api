@@ -65,10 +65,7 @@ func checkName(name string) error {
 	if name == "" {
 		return errors.New("name is required")
 	}
-	if len([]rune(name)) > maxNameLength {
-		return errors.New("name must be at most 100 characters")
-	}
-	return nil
+	return validate.Name(name, maxNameLength, "name")
 }
 
 // checkBalance allows a negative opening balance only on credit cards, where

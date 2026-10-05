@@ -13,7 +13,7 @@ import (
 )
 
 // columns selects a transaction joined with its account and category names.
-const columns = `t.id, t.account_id, a.name, t.to_account_id, ta.name, t.category_id, c.name, p.id, p.name,
+const columns = `t.id, t.account_id, a.name, t.to_account_id, ta.name, t.category_id, c.name, c.icon, c.color, p.id, p.name, p.icon, p.color,
 	t.type, t.amount, t.currency, t.amount_in_default_currency, t.note, t.tags, t.occurred_at, t.created_at, t.updated_at`
 
 // from is the join every read shares; the transfer target, category, and
@@ -217,7 +217,7 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 		database.NullIfEmpty(req.ToAccountID),
 		database.NullIfEmpty(req.CategoryID),
 		req.Type,
-		req.Amount,
+		string(req.Amount),
 		currency,
 		database.NullIfEmpty(req.Note),
 		pq.StringArray(req.Tags),
@@ -317,7 +317,7 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Transac
 		update.Set("type", *req.Type)
 	}
 	if req.Amount != nil {
-		update.Set("amount", *req.Amount)
+		update.Set("amount", string(*req.Amount))
 	}
 	if req.Note != nil {
 		update.Set("note", database.NullIfEmpty(*req.Note))
@@ -369,10 +369,11 @@ func scan(src scanner) (Transaction, error) {
 		tx                                                   Transaction
 		toAccountID, toAccountName                           sql.NullString
 		categoryID, categoryName, parentID, parentName, note sql.NullString
+		categoryIcon, categoryColor, parentIcon, parentColor sql.NullString
 		converted                                            sql.NullString
 		tags                                                 pq.StringArray
 	)
-	if err := src.Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &toAccountID, &toAccountName, &categoryID, &categoryName, &parentID, &parentName,
+	if err := src.Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &toAccountID, &toAccountName, &categoryID, &categoryName, &categoryIcon, &categoryColor, &parentID, &parentName, &parentIcon, &parentColor,
 		&tx.Type, &tx.Amount, &tx.Currency, &converted, &note, &tags, &tx.OccurredAt, &tx.CreatedAt, &tx.UpdatedAt); err != nil {
 		return Transaction{}, err
 	}
@@ -389,9 +390,9 @@ func scan(src scanner) (Transaction, error) {
 	}
 
 	if categoryID.Valid {
-		tx.Category = &CategoryInfo{ID: categoryID.String, Name: categoryName.String}
+		tx.Category = &CategoryInfo{ID: categoryID.String, Name: categoryName.String, Icon: categoryIcon.String, Color: categoryColor.String}
 		if parentID.Valid {
-			tx.Category.Parent = &CategoryInfo{ID: parentID.String, Name: parentName.String}
+			tx.Category.Parent = &CategoryInfo{ID: parentID.String, Name: parentName.String, Icon: parentIcon.String, Color: parentColor.String}
 		}
 	}
 	return tx, nil

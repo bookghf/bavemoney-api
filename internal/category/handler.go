@@ -8,6 +8,7 @@ import (
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/validate"
 )
 
 const basePath = "/api/v1/categories"
@@ -82,12 +83,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, userID string) 
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || len([]rune(req.Name)) > 50 {
-		httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
+	if req.Name == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if err := validate.Name(req.Name, 50, "name"); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if req.Type != "income" && req.Type != "expense" {
 		httpx.WriteError(w, http.StatusBadRequest, "type must be income or expense")
+		return
+	}
+	if err := checkLook(req.Icon, req.Color); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if !h.validParent(w, r, userID, req.ParentID, req.Type) {
@@ -130,11 +139,32 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 	}
 	if req.Name != nil {
 		trimmed := strings.TrimSpace(*req.Name)
-		if trimmed == "" || len([]rune(trimmed)) > 50 {
-			httpx.WriteError(w, http.StatusBadRequest, "name is required and must be at most 50 characters")
+		if trimmed == "" {
+			httpx.WriteError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		if err := validate.Name(trimmed, 50, "name"); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		req.Name = &trimmed
+	}
+	// Changing the type would leave its transactions and subcategories on
+	// the wrong side of the ledger.
+	if req.Type != nil && *req.Type != existing.Type {
+		httpx.WriteError(w, http.StatusBadRequest, "a category's type can not change")
+		return
+	}
+	icon, color := "", ""
+	if req.Icon != nil {
+		icon = *req.Icon
+	}
+	if req.Color != nil {
+		color = *req.Color
+	}
+	if err := checkLook(icon, color); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if req.ParentID != nil && !h.validParent(w, r, userID, *req.ParentID, existing.Type) {
 		return

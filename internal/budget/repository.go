@@ -9,7 +9,7 @@ import (
 	"ledger-api/internal/database"
 )
 
-const columns = `b.id, b.category_id, c.name, b.amount::text, b.currency, b.period, b.start_date::text, b.alert_threshold_pct, b.created_at`
+const columns = `b.id, b.category_id, c.name, c.icon, c.color, b.amount::text, b.currency, b.period, b.start_date::text, b.alert_threshold_pct, b.created_at`
 
 const from = `
 	FROM budgets b
@@ -158,7 +158,7 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 		INSERT INTO budgets (user_id, category_id, amount, currency, period, start_date, alert_threshold_pct)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
-	`, userID, database.NullIfEmpty(req.CategoryID), req.Amount, req.Currency, req.Period, req.StartDate, req.AlertThresholdPct).Scan(&id)
+	`, userID, database.NullIfEmpty(req.CategoryID), string(req.Amount), req.Currency, req.Period, req.StartDate, req.AlertThresholdPct).Scan(&id)
 	if err != nil {
 		return Budget{}, err
 	}
@@ -170,7 +170,7 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 func (r *Repository) Update(ctx context.Context, userID, id string, req UpdateRequest) error {
 	update := database.NewUpdate("budgets")
 	if req.Amount != nil {
-		update.Set("amount", *req.Amount)
+		update.Set("amount", string(*req.Amount))
 	}
 	if req.Period != nil {
 		update.Set("period", *req.Period)
@@ -210,14 +210,14 @@ type scanner interface {
 
 func scan(src scanner) (Budget, error) {
 	var (
-		b                        Budget
-		categoryID, categoryName sql.NullString
+		b                                     Budget
+		categoryID, categoryName, icon, color sql.NullString
 	)
-	if err := src.Scan(&b.ID, &categoryID, &categoryName, &b.Amount, &b.Currency, &b.Period, &b.StartDate, &b.AlertThresholdPct, &b.CreatedAt); err != nil {
+	if err := src.Scan(&b.ID, &categoryID, &categoryName, &icon, &color, &b.Amount, &b.Currency, &b.Period, &b.StartDate, &b.AlertThresholdPct, &b.CreatedAt); err != nil {
 		return Budget{}, err
 	}
 	if categoryID.Valid {
-		b.Category = &CategoryInfo{ID: categoryID.String, Name: categoryName.String}
+		b.Category = &CategoryInfo{ID: categoryID.String, Name: categoryName.String, Icon: icon.String, Color: color.String}
 	}
 	return b, nil
 }

@@ -36,6 +36,8 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in money-api/.env (see .env.example)}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-*}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     ports:
       - "8080:8080"
 

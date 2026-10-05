@@ -11,15 +11,13 @@ import (
 	"ledger-api/internal/auth"
 	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/mail"
 	"ledger-api/internal/validate"
 )
 
 // defaultCurrency is used when register omits default_currency; the app's
 // primary market is Thailand.
 const defaultCurrency = "THB"
-
-// minPasswordLength is the shortest password register accepts.
-const minPasswordLength = 8
 
 // statusActive is the only account status allowed to sign in.
 const statusActive = "active"
@@ -29,11 +27,12 @@ type Handler struct {
 	repo    *Repository
 	auth    *auth.Authenticator
 	refresh *auth.RefreshStore
+	mail    mail.Sender
 }
 
 // NewHandler wires a Handler to its dependencies.
-func NewHandler(repo *Repository, authenticator *auth.Authenticator, refresh *auth.RefreshStore) *Handler {
-	return &Handler{repo: repo, auth: authenticator, refresh: refresh}
+func NewHandler(repo *Repository, authenticator *auth.Authenticator, refresh *auth.RefreshStore, sender mail.Sender) *Handler {
+	return &Handler{repo: repo, auth: authenticator, refresh: refresh, mail: sender}
 }
 
 // Register mounts the auth routes on mux.
@@ -42,6 +41,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", h.login)
 	mux.HandleFunc("/api/v1/auth/refresh", h.refreshToken)
 	mux.HandleFunc("/api/v1/auth/logout", h.logout)
+	mux.HandleFunc("/api/v1/auth/forgot-password", h.forgotPassword)
+	mux.HandleFunc("/api/v1/auth/reset-password", h.resetPassword)
 	mux.HandleFunc("/api/v1/me", h.me)
 	mux.HandleFunc("/api/v1/me/password", h.changePassword)
 	mux.HandleFunc("/api/v1/me/reset", h.resetAccount)
@@ -57,11 +58,15 @@ func (h *Handler) register(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, http.StatusBadRequest, "email is not valid")
 		return
 	}
-	if len(creds.Password) < minPasswordLength {
-		httpx.WriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validate.Password(creds.Password); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	creds.DisplayName = strings.TrimSpace(creds.DisplayName)
+	if err := validate.Name(creds.DisplayName, maxDisplayName, "display name"); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	creds.DefaultCurrency = strings.ToUpper(strings.TrimSpace(creds.DefaultCurrency))
 	if creds.DefaultCurrency == "" {
 		creds.DefaultCurrency = defaultCurrency
@@ -268,7 +273,8 @@ func (h *Handler) credentials(w http.ResponseWriter, r *http.Request) (Credentia
 // maxDisplayName bounds display names.
 const maxDisplayName = 60
 
-// me serves GET /me (the signed-in user) and PATCH /me (edit profile).
+// me serves GET /me (the signed-in user), PATCH /me (edit profile), and
+// DELETE /me (delete the account).
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.auth.Require(w, r)
 	if !ok {
@@ -288,6 +294,8 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": found})
 	case http.MethodPatch:
 		h.updateProfile(w, r, userID)
+	case http.MethodDelete:
+		h.deleteAccount(w, r, userID)
 	default:
 		httpx.MethodNotAllowed(w)
 	}
@@ -304,8 +312,8 @@ func (h *Handler) updateProfile(w http.ResponseWriter, r *http.Request, userID s
 	}
 	if req.DisplayName != nil {
 		name := strings.TrimSpace(*req.DisplayName)
-		if len([]rune(name)) > maxDisplayName {
-			httpx.WriteError(w, http.StatusBadRequest, "display name must be at most 60 characters")
+		if err := validate.Name(name, maxDisplayName, "display name"); err != nil {
+			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		req.DisplayName = &name
@@ -352,8 +360,8 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.NewPassword) < minPasswordLength {
-		httpx.WriteError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := validate.Password(req.NewPassword); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -405,22 +413,7 @@ func (h *Handler) resetAccount(w http.ResponseWriter, r *http.Request) {
 		httpx.MethodNotAllowed(w)
 		return
 	}
-	var req ResetRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if req.Password == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "password is required")
-		return
-	}
-
-	hash, err := h.repo.PasswordHash(r.Context(), userID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "could not reset account")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "password is incorrect")
+	if !h.confirmPassword(w, r, userID, "could not reset account") {
 		return
 	}
 
@@ -430,4 +423,41 @@ func (h *Handler) resetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"message": "account reset", "deleted": counts})
+}
+
+// deleteAccount permanently deletes the user and everything they own, after
+// the password confirms intent. Sessions go with the user row, and the
+// access token stops working because the user no longer exists.
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.confirmPassword(w, r, userID, "could not delete account") {
+		return
+	}
+	if err := h.repo.Delete(r.Context(), userID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not delete account")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// confirmPassword reads a PasswordConfirmation body and checks it against the
+// user's password, writing the error response when it does not match.
+func (h *Handler) confirmPassword(w http.ResponseWriter, r *http.Request, userID, failure string) bool {
+	var req PasswordConfirmation
+	if !httpx.DecodeJSON(w, r, &req) {
+		return false
+	}
+	if req.Password == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "password is required")
+		return false
+	}
+	hash, err := h.repo.PasswordHash(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, failure)
+		return false
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "password is incorrect")
+		return false
+	}
+	return true
 }

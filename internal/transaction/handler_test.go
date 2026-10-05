@@ -30,7 +30,8 @@ func TestValidateCreate(t *testing.T) {
 		{"negative amount", func(r CreateRequest) CreateRequest { r.Amount = "-5"; return r }, base, true},
 		{"three decimals", func(r CreateRequest) CreateRequest { r.Amount = "1.005"; return r }, base, true},
 		{"too many digits", func(r CreateRequest) CreateRequest { r.Amount = "99999999999999999999"; return r }, base, true},
-		{"lowercase currency", func(r CreateRequest) CreateRequest { r.Currency = "thb"; return r }, base, true},
+		{"lowercase currency is normalized", func(r CreateRequest) CreateRequest { r.Currency = "thb"; return r }, base, false},
+		{"bad currency", func(r CreateRequest) CreateRequest { r.Currency = "TH"; return r }, base, true},
 		{"impossible date", func(r CreateRequest) CreateRequest { r.OccurredAt = "2026-02-30T10:00:00Z"; return r }, base, true},
 		{"not a date", func(r CreateRequest) CreateRequest { r.OccurredAt = "not-a-date"; return r }, base, true},
 		{"account not a uuid", func(r CreateRequest) CreateRequest { r.AccountID = "a"; return r }, base, true},
@@ -47,7 +48,7 @@ func TestValidateCreate(t *testing.T) {
 		if tt.edit != nil {
 			req = tt.edit(req)
 		}
-		if err := validateCreate(req); (err != nil) != tt.wantErr {
+		if err := validateCreate(&req); (err != nil) != tt.wantErr {
 			t.Errorf("%s: err = %v, wantErr %v", tt.name, err, tt.wantErr)
 		}
 	}
@@ -104,9 +105,22 @@ func TestParseListFilterUsesTimeZoneDays(t *testing.T) {
 		{"account": {"not-a-uuid"}},
 		{"type": {"refund"}},
 		{"page": {"9223372036854775807"}},
+		{"tz": {"Local"}},
+		{"from": {"2026-02-01"}, "to": {"2026-01-01"}},
+		{"sort": {"-bogus"}},
 	} {
 		if _, err := parseListFilter(bad); err == nil {
 			t.Errorf("parseListFilter(%v): want error", bad)
 		}
+	}
+}
+
+func TestParseListFilterAcceptsReportStyleNames(t *testing.T) {
+	filter, err := parseListFilter(url.Values{"account_id": {accountA}, "category_id": {category}, "sort": {"-amount"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.AccountID != accountA || filter.CategoryID != category {
+		t.Errorf("aliases not read: %+v", filter)
 	}
 }

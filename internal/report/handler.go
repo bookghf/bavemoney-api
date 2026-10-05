@@ -3,6 +3,7 @@ package report
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
@@ -43,7 +44,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		AccountID:  query.Get("account_id"),
 		CategoryID: query.Get("category_id"),
 		Type:       query.Get("type"),
-		Currency:   query.Get("currency"),
+		Currency:   strings.ToUpper(strings.TrimSpace(query.Get("currency"))),
 		TimeZone:   query.Get("tz"),
 	}
 

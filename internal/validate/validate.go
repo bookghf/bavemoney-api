@@ -53,9 +53,13 @@ func Date(s string) (time.Time, bool) {
 }
 
 // Location resolves an IANA time zone name, defaulting to UTC when empty.
+// "Local" is Go-specific (the server's zone), so it is rejected.
 func Location(name string) (*time.Location, bool) {
 	if name == "" {
 		return time.UTC, true
+	}
+	if name == "Local" {
+		return nil, false
 	}
 	loc, err := time.LoadLocation(name)
 	return loc, err == nil

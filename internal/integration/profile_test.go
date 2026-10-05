@@ -108,3 +108,48 @@ func TestResetAccount(t *testing.T) {
 		t.Errorf("another user's data was touched: %s transactions", got)
 	}
 }
+
+func TestDeleteAccount(t *testing.T) {
+	u, other := register(t), register(t)
+	account := createAccount(t, u, "Wallet", "THB", "100")
+	otherAccount := createAccount(t, other, "Other", "THB", "0")
+	createTx(t, u, map[string]interface{}{"account_id": account, "type": "expense", "amount": "17"})
+	createTx(t, other, map[string]interface{}{"account_id": otherAccount, "type": "expense", "amount": "5"})
+	expect(t, call(t, "POST", "/api/v1/categories", u.Token, map[string]string{"name": "Pets", "type": "expense"}),
+		http.StatusCreated, "category")
+	expect(t, call(t, "POST", "/api/v1/budgets", u.Token, map[string]interface{}{
+		"amount": "1000", "currency": "THB", "period": "monthly", "start_date": "2026-10-01",
+	}), http.StatusCreated, "budget")
+
+	expect(t, call(t, "DELETE", "/api/v1/me", u.Token, map[string]string{"password": "wrong password"}),
+		http.StatusBadRequest, "wrong password")
+	expect(t, call(t, "DELETE", "/api/v1/me", u.Token, map[string]string{}), http.StatusBadRequest, "no password")
+	expect(t, call(t, "DELETE", "/api/v1/me", "", map[string]string{"password": "correct horse"}),
+		http.StatusUnauthorized, "no token")
+	expect(t, call(t, "GET", "/api/v1/me", u.Token, nil), http.StatusOK, "a failed delete kept the user")
+
+	expect(t, call(t, "DELETE", "/api/v1/me", u.Token, map[string]string{"password": "correct horse"}),
+		http.StatusNoContent, "delete")
+
+	expect(t, call(t, "GET", "/api/v1/me", u.Token, nil), http.StatusUnauthorized, "access token after delete")
+	expect(t, call(t, "POST", "/api/v1/auth/refresh", "", map[string]string{"refresh_token": u.Refresh}),
+		http.StatusUnauthorized, "refresh token after delete")
+	expect(t, call(t, "POST", "/api/v1/auth/login", "", map[string]string{"email": u.Email, "password": "correct horse"}),
+		http.StatusUnauthorized, "login after delete")
+	for _, table := range []string{"accounts", "transactions", "categories", "budgets"} {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE user_id = $1`, u.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Errorf("%d %s left after delete", n, table)
+		}
+	}
+
+	expect(t, call(t, "POST", "/api/v1/auth/register", "", map[string]string{
+		"email": u.Email, "password": "correct horse", "display_name": "QA again", "default_currency": "THB",
+	}), http.StatusCreated, "the email can be used again")
+	if got := call(t, "GET", "/api/v1/transactions", other.Token, nil).str("pagination", "total_items"); got != "1" {
+		t.Errorf("another user's data was touched: %s transactions", got)
+	}
+}
