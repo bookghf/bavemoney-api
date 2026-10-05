@@ -63,8 +63,12 @@ type ListFilter struct {
 	// means unbounded.
 	FromTime time.Time
 	ToTime   time.Time
-	Search   string
-	Sort     string
+	// Search matches the note, category, account, tags, or amount; see
+	// searchCondition. SearchCategories are extra category IDs the client
+	// matched by display name (e.g. the Thai name of a system category).
+	Search           string
+	SearchCategories []string
+	Sort             string
 }
 
 // CreateRequest is the POST /transactions payload. A transfer (type

@@ -124,3 +124,58 @@ func TestParseListFilterAcceptsReportStyleNames(t *testing.T) {
 		t.Errorf("aliases not read: %+v", filter)
 	}
 }
+
+func TestParseListFilterSearch(t *testing.T) {
+	filter, err := parseListFilter(url.Values{"q": {"  lunch "}, "search_categories": {category + ", " + accountA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.Search != "lunch" || len(filter.SearchCategories) != 2 {
+		t.Errorf("q alias or search_categories not read: %+v", filter)
+	}
+
+	// Category matches only widen a text search.
+	filter, err = parseListFilter(url.Values{"search_categories": {category}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filter.SearchCategories != nil {
+		t.Errorf("search_categories without search = %v, want none", filter.SearchCategories)
+	}
+
+	for _, bad := range []url.Values{
+		{"search": {"x"}, "search_categories": {"not-a-uuid"}},
+		{"search": {strings.Repeat("ก", maxSearchLength+1)}},
+	} {
+		if _, err := parseListFilter(bad); err == nil {
+			t.Errorf("parseListFilter(%v): want error", bad)
+		}
+	}
+}
+
+func TestAmountPrefix(t *testing.T) {
+	tests := []struct {
+		in     string
+		want   string
+		wantOK bool
+	}{
+		{"257", "257", true},
+		{"1,500", "1500", true},
+		{"1500.5", "1500.5", true},
+		{"12.", "12.", true},
+		{"0257", "257", true},
+		{"0.5", "0.5", true},
+		{"0", "0", true},
+		{"1.005", "", false},
+		{"12a", "", false},
+		{",5", "", false},
+		{"-5", "", false},
+		{"lunch", "", false},
+	}
+	for _, tt := range tests {
+		got, ok := amountPrefix(tt.in)
+		if got != tt.want || ok != tt.wantOK {
+			t.Errorf("amountPrefix(%q) = %q, %v; want %q, %v", tt.in, got, ok, tt.want, tt.wantOK)
+		}
+	}
+}
