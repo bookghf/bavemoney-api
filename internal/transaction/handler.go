@@ -263,6 +263,10 @@ func validateCreate(req *CreateRequest) error {
 	return nil
 }
 
+// ValidateCreate is validateCreate for other packages that build transactions,
+// such as recurring rules, so every source of transactions is checked alike.
+func ValidateCreate(req *CreateRequest) error { return validateCreate(req) }
+
 func validateText(note string, tags []string) error {
 	if err := validate.FreeText(note, maxNoteLength, "note"); err != nil {
 		return err

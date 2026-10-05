@@ -18,6 +18,7 @@ import (
 	"ledger-api/internal/currency"
 	"ledger-api/internal/device_token"
 	"ledger-api/internal/mail"
+	"ledger-api/internal/recurring"
 	"ledger-api/internal/report"
 	"ledger-api/internal/transaction"
 	"ledger-api/internal/user"
@@ -70,6 +71,7 @@ func Router(cfg config.Config, db *sql.DB) http.Handler {
 		category.NewHandler(category.NewRepository(db), authenticator),
 		budget.NewHandler(budget.NewRepository(db), authenticator),
 		transaction.NewHandler(transaction.NewRepository(db), authenticator),
+		recurring.NewHandler(recurring.NewRepository(db), authenticator),
 		device_token.NewHandler(device_token.NewRepository(db), authenticator),
 		attachment.NewHandler(attachment.NewRepository(db), authenticator),
 		report.NewHandler(report.NewRepository(db), authenticator),

@@ -183,28 +183,23 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	currency, err := lockAccount(ctx, tx, userID, req.AccountID, ErrAccountNotFound)
+	id, err := CreateInTx(ctx, tx, userID, req)
 	if err != nil {
 		return Transaction{}, err
 	}
-	switch req.Type {
-	case TypeTransfer:
-		toCurrency, err := lockAccount(ctx, tx, userID, req.ToAccountID, ErrToAccountNotFound)
-		if err != nil {
-			return Transaction{}, err
-		}
-		if toCurrency != currency {
-			return Transaction{}, ErrCurrencyMismatch
-		}
-	default:
-		if req.Currency != "" && req.Currency != currency {
-			return Transaction{}, &AccountCurrencyError{Account: currency, Given: req.Currency}
-		}
+	if err := tx.Commit(); err != nil {
+		return Transaction{}, err
 	}
-	if req.CategoryID != "" {
-		if err := checkCategory(ctx, tx, userID, req.CategoryID, req.Type); err != nil {
-			return Transaction{}, err
-		}
+	return r.Get(ctx, userID, id)
+}
+
+// CreateInTx inserts a transaction validated by ValidateCreate inside the
+// caller's database transaction and returns its id. Other packages (such as
+// recurring rules) use it to add transactions atomically with their own rows.
+func CreateInTx(ctx context.Context, tx *sql.Tx, userID string, req CreateRequest) (string, error) {
+	currency, err := CheckReferences(ctx, tx, userID, req)
+	if err != nil {
+		return "", err
 	}
 
 	var id string
@@ -224,15 +219,43 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 		req.OccurredAt,
 	).Scan(&id)
 	if err != nil {
-		return Transaction{}, err
+		return "", err
 	}
 	if err := convert(ctx, tx, id); err != nil {
-		return Transaction{}, err
+		return "", err
 	}
-	if err := tx.Commit(); err != nil {
-		return Transaction{}, err
+	return id, nil
+}
+
+// CheckReferences verifies, inside tx, that the accounts and category of req
+// are the user's and usable: accounts open (and share-locked), a transfer's
+// accounts in one currency, an income/expense in its account's currency, and
+// the category matching the type. It returns the transaction's currency.
+func CheckReferences(ctx context.Context, tx *sql.Tx, userID string, req CreateRequest) (string, error) {
+	currency, err := lockAccount(ctx, tx, userID, req.AccountID, ErrAccountNotFound)
+	if err != nil {
+		return "", err
 	}
-	return r.Get(ctx, userID, id)
+	switch req.Type {
+	case TypeTransfer:
+		toCurrency, err := lockAccount(ctx, tx, userID, req.ToAccountID, ErrToAccountNotFound)
+		if err != nil {
+			return "", err
+		}
+		if toCurrency != currency {
+			return "", ErrCurrencyMismatch
+		}
+	default:
+		if req.Currency != "" && req.Currency != currency {
+			return "", &AccountCurrencyError{Account: currency, Given: req.Currency}
+		}
+	}
+	if req.CategoryID != "" {
+		if err := checkCategory(ctx, tx, userID, req.CategoryID, req.Type); err != nil {
+			return "", err
+		}
+	}
+	return currency, nil
 }
 
 // lockAccount share-locks an account the user owns and returns its currency.
