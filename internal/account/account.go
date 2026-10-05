@@ -6,6 +6,13 @@ import "ledger-api/internal/validate"
 // Account types.
 var types = map[string]bool{"cash": true, "bank": true, "credit_card": true, "e_wallet": true}
 
+// Colors are the palette keys shared with categories; the app maps them to
+// light and dark shades.
+var colors = map[string]bool{
+	"orange": true, "amber": true, "lime": true, "cyan": true, "indigo": true,
+	"violet": true, "fuchsia": true, "pink": true, "brown": true, "slate": true,
+}
+
 // maxNameLength bounds account names, per the API spec.
 const maxNameLength = 100
 
@@ -16,6 +23,7 @@ type Account struct {
 	Name           string `json:"name"`
 	Type           string `json:"type"`
 	Currency       string `json:"currency"`
+	Color          string `json:"color,omitempty"`
 	InitialBalance string `json:"initial_balance"`
 	CurrentBalance string `json:"current_balance"`
 	IsArchived     bool   `json:"is_archived"`
@@ -27,6 +35,7 @@ type CreateRequest struct {
 	Name           string           `json:"name"`
 	Type           string           `json:"type"`
 	Currency       string           `json:"currency"`
+	Color          string           `json:"color"`
 	InitialBalance validate.Decimal `json:"initial_balance"`
 }
 
@@ -35,11 +44,18 @@ type UpdateRequest struct {
 	Name           *string           `json:"name"`
 	Type           *string           `json:"type"`
 	Currency       *string           `json:"currency"`
+	Color          *string           `json:"color"`
 	InitialBalance *validate.Decimal `json:"initial_balance"`
 	IsArchived     *bool             `json:"is_archived"`
 }
 
 // Empty reports whether the request carries no field to update.
 func (r UpdateRequest) Empty() bool {
-	return r.Name == nil && r.Type == nil && r.Currency == nil && r.InitialBalance == nil && r.IsArchived == nil
+	return r.Name == nil && r.Type == nil && r.Currency == nil && r.Color == nil && r.InitialBalance == nil && r.IsArchived == nil
+}
+
+// ReconcileRequest is the POST /accounts/{id}/reconcile payload: the balance
+// the account really holds today, as shown by the bank or wallet.
+type ReconcileRequest struct {
+	Balance validate.Decimal `json:"balance"`
 }
