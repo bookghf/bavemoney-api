@@ -20,6 +20,8 @@ func TestValidateProduction(t *testing.T) {
 		JWTSecret:          strongSecret,
 		CORSAllowedOrigins: "https://app.example.com",
 		DatabaseURL:        "postgres://ledger:" + strongPassword + "@db/ledger",
+		ResendAPIKey:       strongSecret,
+		MailFrom:           "Ledger <no-reply@example.com>",
 	}
 	if err := good.Validate(); err != nil {
 		t.Fatalf("good config rejected: %v", err)
@@ -30,6 +32,8 @@ func TestValidateProduction(t *testing.T) {
 		"wildcard cors":  func(c *Config) { c.CORSAllowedOrigins = "*" },
 		"short password": func(c *Config) { c.DatabaseURL = "postgres://ledger:short@db/ledger" },
 		"no database":    func(c *Config) { c.DatabaseURL = "" },
+		"no mail key":    func(c *Config) { c.ResendAPIKey = "" },
+		"no mail sender": func(c *Config) { c.MailFrom = "" },
 	} {
 		cfg := good
 		edit(&cfg)

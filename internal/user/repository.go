@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 )
 
 // Repository reads and writes user records.
@@ -165,4 +166,52 @@ func (r *Repository) ResetData(ctx context.Context, id string) (ResetCounts, err
 func (r *Repository) Delete(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
 	return err
+}
+
+// SaveResetCode stores a new reset code for the user, replacing any earlier
+// one, unless the last code is younger than cooldown. It reports whether the
+// code was saved (and so should be sent).
+func (r *Repository) SaveResetCode(ctx context.Context, userID, codeHash string, ttl, cooldown time.Duration) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+		VALUES ($1, $2, now() + $3 * interval '1 second')
+		ON CONFLICT (user_id) DO UPDATE
+		SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, attempts = 0, created_at = now()
+		WHERE password_reset_codes.created_at < now() - $4 * interval '1 second'
+	`, userID, codeHash, ttl.Seconds(), cooldown.Seconds())
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n > 0, err
+}
+
+// UseResetCodeAttempt counts one try at the user's reset code and returns its
+// hash. It returns sql.ErrNoRows when there is no code, it has expired, or its
+// tries are used up.
+func (r *Repository) UseResetCodeAttempt(ctx context.Context, userID string, maxAttempts int) (string, error) {
+	var hash string
+	err := r.db.QueryRowContext(ctx, `
+		UPDATE password_reset_codes SET attempts = attempts + 1
+		WHERE user_id = $1 AND expires_at > now() AND attempts < $2
+		RETURNING code_hash
+	`, userID, maxAttempts).Scan(&hash)
+	return hash, err
+}
+
+// ResetPassword stores the new password hash and deletes the used reset code
+// in one database transaction.
+func (r *Repository) ResetPassword(ctx context.Context, userID, hash string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, userID, hash); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM password_reset_codes WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

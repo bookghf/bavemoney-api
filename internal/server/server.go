@@ -17,6 +17,7 @@ import (
 	"ledger-api/internal/config"
 	"ledger-api/internal/currency"
 	"ledger-api/internal/device_token"
+	"ledger-api/internal/mail"
 	"ledger-api/internal/report"
 	"ledger-api/internal/transaction"
 	"ledger-api/internal/user"
@@ -46,6 +47,8 @@ func New(cfg config.Config, db *sql.DB) *http.Server {
 var credentialPaths = []string{
 	"/api/v1/auth/login",
 	"/api/v1/auth/register",
+	"/api/v1/auth/forgot-password",
+	"/api/v1/auth/reset-password",
 	"/api/v1/admin/auth/login",
 	"/api/v1/me/password",
 	"/api/v1/me/reset",
@@ -62,7 +65,7 @@ func Router(cfg config.Config, db *sql.DB) http.Handler {
 	mux.HandleFunc("/health", health(db))
 
 	handlers := []registrar{
-		user.NewHandler(user.NewRepository(db), authenticator, auth.NewRefreshStore(db)),
+		user.NewHandler(user.NewRepository(db), authenticator, auth.NewRefreshStore(db), mail.New(cfg.ResendAPIKey, cfg.MailFrom)),
 		account.NewHandler(account.NewRepository(db), authenticator),
 		category.NewHandler(category.NewRepository(db), authenticator),
 		budget.NewHandler(budget.NewRepository(db), authenticator),

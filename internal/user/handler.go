@@ -11,6 +11,7 @@ import (
 	"ledger-api/internal/auth"
 	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/mail"
 	"ledger-api/internal/validate"
 )
 
@@ -26,11 +27,12 @@ type Handler struct {
 	repo    *Repository
 	auth    *auth.Authenticator
 	refresh *auth.RefreshStore
+	mail    mail.Sender
 }
 
 // NewHandler wires a Handler to its dependencies.
-func NewHandler(repo *Repository, authenticator *auth.Authenticator, refresh *auth.RefreshStore) *Handler {
-	return &Handler{repo: repo, auth: authenticator, refresh: refresh}
+func NewHandler(repo *Repository, authenticator *auth.Authenticator, refresh *auth.RefreshStore, sender mail.Sender) *Handler {
+	return &Handler{repo: repo, auth: authenticator, refresh: refresh, mail: sender}
 }
 
 // Register mounts the auth routes on mux.
@@ -39,6 +41,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/auth/login", h.login)
 	mux.HandleFunc("/api/v1/auth/refresh", h.refreshToken)
 	mux.HandleFunc("/api/v1/auth/logout", h.logout)
+	mux.HandleFunc("/api/v1/auth/forgot-password", h.forgotPassword)
+	mux.HandleFunc("/api/v1/auth/reset-password", h.resetPassword)
 	mux.HandleFunc("/api/v1/me", h.me)
 	mux.HandleFunc("/api/v1/me/password", h.changePassword)
 	mux.HandleFunc("/api/v1/me/reset", h.resetAccount)

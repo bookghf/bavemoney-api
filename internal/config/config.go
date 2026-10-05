@@ -26,6 +26,10 @@ type Config struct {
 	// CORSAllowedOrigins is a comma-separated list of browser origins allowed
 	// to call the API; "*" allows any origin (development only).
 	CORSAllowedOrigins string
+	// ResendAPIKey and MailFrom send password reset emails through Resend.
+	// Without a key, development logs the emails instead.
+	ResendAPIKey string
+	MailFrom     string
 }
 
 // Minimum lengths for secrets in production.
@@ -42,6 +46,8 @@ func Load() Config {
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
 		CORSAllowedOrigins: os.Getenv("CORS_ALLOWED_ORIGINS"),
+		ResendAPIKey:       os.Getenv("RESEND_API_KEY"),
+		MailFrom:           os.Getenv("MAIL_FROM"),
 	}
 	if !cfg.Production() {
 		if cfg.CORSAllowedOrigins == "" {
@@ -73,6 +79,9 @@ func (c Config) Validate() error {
 	}
 	if c.CORSAllowedOrigins == "" || strings.Contains(c.CORSAllowedOrigins, "*") {
 		problems = append(problems, "CORS_ALLOWED_ORIGINS must list explicit origins")
+	}
+	if c.ResendAPIKey == "" || c.MailFrom == "" {
+		problems = append(problems, "RESEND_API_KEY and MAIL_FROM must be set so password reset emails are sent")
 	}
 	if parsed, err := url.Parse(c.DatabaseURL); err != nil {
 		problems = append(problems, "DATABASE_URL is not a valid URL")
