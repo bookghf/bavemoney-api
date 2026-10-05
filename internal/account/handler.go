@@ -3,10 +3,12 @@ package account
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/database"
 	"ledger-api/internal/httpx"
+	"ledger-api/internal/validate"
 )
 
 const basePath = "/api/v1/accounts"
@@ -47,6 +49,10 @@ func (h *Handler) collection(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) item(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.auth.Require(w, r)
 	if !ok {
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/reconcile") {
+		h.reconcileRoute(w, r, userID)
 		return
 	}
 	id, ok := httpx.PathID(w, r, basePath+"/")
@@ -142,6 +148,56 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, id stri
 			httpx.WriteError(w, http.StatusBadRequest, err.Error())
 		default:
 			httpx.WriteError(w, http.StatusInternalServerError, "could not update account")
+		}
+		return
+	}
+
+	updated, err := h.repo.Get(r.Context(), userID, id)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch account")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"account": updated})
+}
+
+// reconcileRoute serves POST /accounts/{id}/reconcile.
+func (h *Handler) reconcileRoute(w http.ResponseWriter, r *http.Request, userID string) {
+	id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, basePath+"/"), "/reconcile")
+	if !validate.UUID(id) {
+		httpx.WriteError(w, http.StatusNotFound, "not found")
+		return
+	}
+	if r.Method != http.MethodPost {
+		httpx.MethodNotAllowed(w)
+		return
+	}
+
+	var req ReconcileRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	existing, err := h.repo.Get(r.Context(), userID, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			httpx.WriteError(w, http.StatusNotFound, "account not found")
+			return
+		}
+		httpx.WriteError(w, http.StatusInternalServerError, "could not fetch account")
+		return
+	}
+	if err := checkReconcile(existing, req); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.repo.Reconcile(r.Context(), userID, id, string(req.Balance)); err != nil {
+		switch {
+		case errors.Is(err, ErrNotFound):
+			httpx.WriteError(w, http.StatusNotFound, "account not found")
+		case database.IsNumericOverflow(err):
+			httpx.WriteError(w, http.StatusBadRequest, "balance is too large for this account")
+		default:
+			httpx.WriteError(w, http.StatusInternalServerError, "could not reconcile account")
 		}
 		return
 	}

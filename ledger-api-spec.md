@@ -278,6 +278,7 @@ Create a new account.
 | type | string | yes | One of: `cash`, `bank`, `credit_card`, `e_wallet` |
 | currency | string | yes | ISO 4217 code, must exist in `currencies` table and be active |
 | initial_balance | string | no | Decimal string. Defaults to `"0.00"` |
+| color | string | no | Palette key: `orange`, `amber`, `lime`, `cyan`, `indigo`, `violet`, `fuchsia`, `pink`, `brown`, `slate`. Omitted means the app picks a default for the type; accounts without one return no `color` field |
 
 **Response: `201 Created`**
 
@@ -315,11 +316,39 @@ Update an account's name, type, or archive status.
 |-------|------|-------|
 | name | string | Max 100 chars |
 | type | string | `cash`, `bank`, `credit_card`, `e_wallet` |
+| color | string | Palette key as on create; `""` clears it |
 | is_archived | boolean | Archiving hides the account from the default list but preserves history |
 
 **Response: `200 OK`** — returns the updated account object (same shape as POST response).
 
 **Errors:** `404` if account doesn't belong to user.
+
+---
+
+### POST /accounts/:id/reconcile
+
+Set the account's current balance to what the bank or wallet really shows,
+by moving its opening balance: `initial_balance = balance - (current_balance - initial_balance)`.
+No transaction is created, so reports are unchanged. Runs in one database
+transaction that locks the account, so a transaction being added at the same
+time is either counted or applied on top of the new balance.
+
+**Request body:**
+
+```json
+{ "balance": "1234.56" }
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| balance | string | yes | Decimal, at most 2 places. Negative only for `credit_card` (amount owed) |
+
+The resulting `initial_balance` may be negative on any account type: it just
+means the recorded history overstates what came in.
+
+**Response: `200 OK`** — `{ "account": { ... } }` with the new balances.
+
+**Errors:** `400` for an invalid balance, `404` if the account doesn't belong to the user.
 
 ---
 
