@@ -269,7 +269,8 @@ func (h *Handler) credentials(w http.ResponseWriter, r *http.Request) (Credentia
 // maxDisplayName bounds display names.
 const maxDisplayName = 60
 
-// me serves GET /me (the signed-in user) and PATCH /me (edit profile).
+// me serves GET /me (the signed-in user), PATCH /me (edit profile), and
+// DELETE /me (delete the account).
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	userID, ok := h.auth.Require(w, r)
 	if !ok {
@@ -289,6 +290,8 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"user": found})
 	case http.MethodPatch:
 		h.updateProfile(w, r, userID)
+	case http.MethodDelete:
+		h.deleteAccount(w, r, userID)
 	default:
 		httpx.MethodNotAllowed(w)
 	}
@@ -406,22 +409,7 @@ func (h *Handler) resetAccount(w http.ResponseWriter, r *http.Request) {
 		httpx.MethodNotAllowed(w)
 		return
 	}
-	var req ResetRequest
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
-	if req.Password == "" {
-		httpx.WriteError(w, http.StatusBadRequest, "password is required")
-		return
-	}
-
-	hash, err := h.repo.PasswordHash(r.Context(), userID)
-	if err != nil {
-		httpx.WriteError(w, http.StatusInternalServerError, "could not reset account")
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
-		httpx.WriteError(w, http.StatusBadRequest, "password is incorrect")
+	if !h.confirmPassword(w, r, userID, "could not reset account") {
 		return
 	}
 
@@ -431,4 +419,41 @@ func (h *Handler) resetAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]interface{}{"message": "account reset", "deleted": counts})
+}
+
+// deleteAccount permanently deletes the user and everything they own, after
+// the password confirms intent. Sessions go with the user row, and the
+// access token stops working because the user no longer exists.
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, userID string) {
+	if !h.confirmPassword(w, r, userID, "could not delete account") {
+		return
+	}
+	if err := h.repo.Delete(r.Context(), userID); err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, "could not delete account")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// confirmPassword reads a PasswordConfirmation body and checks it against the
+// user's password, writing the error response when it does not match.
+func (h *Handler) confirmPassword(w http.ResponseWriter, r *http.Request, userID, failure string) bool {
+	var req PasswordConfirmation
+	if !httpx.DecodeJSON(w, r, &req) {
+		return false
+	}
+	if req.Password == "" {
+		httpx.WriteError(w, http.StatusBadRequest, "password is required")
+		return false
+	}
+	hash, err := h.repo.PasswordHash(r.Context(), userID)
+	if err != nil {
+		httpx.WriteError(w, http.StatusInternalServerError, failure)
+		return false
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)) != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "password is incorrect")
+		return false
+	}
+	return true
 }

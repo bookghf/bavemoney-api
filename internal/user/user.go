@@ -54,8 +54,9 @@ type ChangePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
-// ResetRequest is the POST /me/reset payload: the password confirms intent.
-type ResetRequest struct {
+// PasswordConfirmation is the POST /me/reset and DELETE /me payload: the
+// password confirms intent.
+type PasswordConfirmation struct {
 	Password string `json:"password"`
 }
 

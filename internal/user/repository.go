@@ -159,3 +159,10 @@ func (r *Repository) ResetData(ctx context.Context, id string) (ResetCounts, err
 	}
 	return counts, tx.Commit()
 }
+
+// Delete removes the user. Every table that belongs to a user cascades from
+// the user row, so this also deletes their ledger data and sessions.
+func (r *Repository) Delete(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = $1`, id)
+	return err
+}
