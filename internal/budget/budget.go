@@ -31,6 +31,9 @@ type Budget struct {
 	PercentUsed  float64 `json:"percent_used"`
 	IsOverBudget bool    `json:"is_over_budget"`
 	CreatedAt    string  `json:"created_at"`
+	// monthStartDay is the owner's month_start_day, which monthly periods
+	// follow.
+	monthStartDay int
 }
 
 // CreateRequest is the POST /budgets payload.

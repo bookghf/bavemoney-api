@@ -760,7 +760,7 @@ Aggregated spending and income summary for a given period.
 | Param | Type | Required | Notes |
 |-------|------|----------|-------|
 | period | string | yes | `day`, `week` (Sunday–Saturday), `month`, `year`, or `custom` |
-| date | string | unless custom | A date within the desired period. For `day`/`week`: `2026-08-12`. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026` |
+| date | string | unless custom | A date within the desired period. For `day`/`week`: `2026-08-12`. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026`. Months begin on the user's `month_start_day` (1–28, set with PATCH /me): a full date picks the month containing it (day 25, `2026-10-05` → 2026-09-25..2026-10-24) and `YYYY-MM` the month that starts in it. Monthly budgets follow the same months |
 | from, to | string | custom only | Inclusive `YYYY-MM-DD` bounds; `to` ≥ `from`, at most 731 days |
 | account_id | uuid | no | Filter to a specific account |
 | category_id | uuid | no | Filter to one category. A top-level category includes its subcategories; a subcategory matches only itself |
