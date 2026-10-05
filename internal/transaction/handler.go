@@ -3,11 +3,13 @@ package transaction
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"ledger-api/internal/auth"
 	"ledger-api/internal/httpx"
@@ -21,6 +23,9 @@ const (
 	defaultLimit = 20
 	maxLimit     = 100
 	maxPage      = 100_000
+
+	maxSearchLength     = 100
+	maxSearchCategories = 100
 )
 
 // Handler serves the /api/v1/transactions endpoints.
@@ -114,8 +119,9 @@ func parseListFilter(query url.Values) (ListFilter, error) {
 		AccountID:  firstOf(query, "account", "account_id"),
 		CategoryID: firstOf(query, "category", "category_id"),
 		Type:       query.Get("type"),
-		Search:     strings.TrimSpace(query.Get("search")),
-		Sort:       query.Get("sort"),
+		// search, or q for short.
+		Search: strings.TrimSpace(firstOf(query, "search", "q")),
+		Sort:   query.Get("sort"),
 	}
 
 	if raw := query.Get("page"); raw != "" {
@@ -171,6 +177,26 @@ func parseListFilter(query url.Values) (ListFilter, error) {
 	}
 	if !filter.FromTime.IsZero() && !filter.ToTime.IsZero() && !filter.FromTime.Before(filter.ToTime) {
 		return ListFilter{}, errors.New("from must not be after to")
+	}
+	if utf8.RuneCountInString(filter.Search) > maxSearchLength {
+		return ListFilter{}, fmt.Errorf("search must be at most %d characters", maxSearchLength)
+	}
+	for _, id := range strings.Split(query.Get("search_categories"), ",") {
+		if id = strings.TrimSpace(id); id == "" {
+			continue
+		}
+		if !validate.UUID(id) {
+			return ListFilter{}, errors.New("search_categories must be comma-separated UUIDs")
+		}
+		filter.SearchCategories = append(filter.SearchCategories, id)
+	}
+	if len(filter.SearchCategories) > maxSearchCategories {
+		return ListFilter{}, fmt.Errorf("search_categories takes at most %d ids", maxSearchCategories)
+	}
+	// Category matches only widen a text search; alone they would act as a
+	// second, silent category filter.
+	if filter.Search == "" {
+		filter.SearchCategories = nil
 	}
 	for _, tag := range strings.Split(query.Get("tags"), ",") {
 		if tag = strings.TrimSpace(tag); tag != "" {

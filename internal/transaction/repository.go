@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/lib/pq"
@@ -75,7 +76,7 @@ func (r *Repository) List(ctx context.Context, userID string, filter ListFilter)
 		add("t.occurred_at < $%d", filter.ToTime)
 	}
 	if filter.Search != "" {
-		add("t.note ILIKE '%%' || $%d || '%%'", escapeLike(filter.Search))
+		where = append(where, searchCondition(filter, &args))
 	}
 	conditions := " WHERE " + strings.Join(where, " AND ")
 
@@ -111,6 +112,52 @@ func (r *Repository) List(ctx context.Context, userID string, filter ListFilter)
 		transactions = append(transactions, tx)
 	}
 	return transactions, total, rows.Err()
+}
+
+// searchCondition ORs together every field a search can match: the note,
+// the category or its parent, either account of a transfer, any tag, and the
+// amount by number prefix ("257" matches 257.00, "1,500" matches 1500.00).
+// It scans only the user's rows, already narrowed by the (user_id,
+// occurred_at) index, so substring matching needs no index of its own.
+func searchCondition(filter ListFilter, args *[]interface{}) string {
+	*args = append(*args, escapeLike(filter.Search))
+	text := fmt.Sprintf("'%%' || $%d || '%%'", len(*args))
+	terms := []string{
+		"t.note ILIKE " + text,
+		"c.name ILIKE " + text,
+		"p.name ILIKE " + text,
+		"a.name ILIKE " + text,
+		"ta.name ILIKE " + text,
+		"EXISTS (SELECT 1 FROM unnest(t.tags) AS tag WHERE tag ILIKE " + text + ")",
+	}
+	if prefix, ok := amountPrefix(filter.Search); ok {
+		*args = append(*args, prefix)
+		terms = append(terms, fmt.Sprintf("t.amount::text LIKE $%d || '%%'", len(*args)))
+	}
+	if len(filter.SearchCategories) > 0 {
+		// A matched parent category also matches its subcategories.
+		*args = append(*args, pq.StringArray(filter.SearchCategories))
+		terms = append(terms, fmt.Sprintf("t.category_id = ANY($%[1]d::uuid[]) OR c.parent_id = ANY($%[1]d::uuid[])", len(*args)))
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
+}
+
+// amountPattern is a number as people type it: digits with optional
+// thousands separators and up to two decimals.
+var amountPattern = regexp.MustCompile(`^[0-9][0-9,]*(\.[0-9]{0,2})?$`)
+
+// amountPrefix turns a typed number into a prefix of amount::text, which
+// always has two decimals ("1500.00"). ok is false for non-numeric input.
+func amountPrefix(search string) (string, bool) {
+	if !amountPattern.MatchString(search) {
+		return "", false
+	}
+	prefix := strings.ReplaceAll(search, ",", "")
+	// Postgres prints no leading zeros, so "0257" should still find 257.00.
+	if trimmed := strings.TrimLeft(prefix, "0"); trimmed != "" && trimmed[0] != '.' {
+		prefix = trimmed
+	}
+	return prefix, true
 }
 
 // escapeLike makes user input match literally inside an ILIKE pattern.

@@ -341,7 +341,8 @@ List transactions for the authenticated user with filtering and pagination.
 | tags | string | — | Comma-separated. Returns transactions matching *any* of the given tags |
 | from | date | — | Inclusive start date (`YYYY-MM-DD`) |
 | to | date | — | Inclusive end date (`YYYY-MM-DD`) |
-| search | string | — | Full-text search on `note` field |
+| search | string | — | Case-insensitive substring match on the note, category (or its parent) name, account name (either side of a transfer), and tags; a number such as `257` or `1,500` also matches amounts by prefix (`257.00`, `1500.00`). Alias `q`. Max 100 characters |
+| search_categories | string | — | Comma-separated category IDs (max 100) that also count as a search match, e.g. ones the client matched by a translated name. A parent includes its subcategories. Ignored without `search` |
 | sort | string | `-occurred_at` | Prefix `-` for descending. Allowed fields: `occurred_at`, `amount`, `created_at` |
 
 **Response: `200 OK`**
