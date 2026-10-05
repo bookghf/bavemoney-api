@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"ledger-api/internal/month"
 	"ledger-api/internal/validate"
 )
 
@@ -12,41 +13,35 @@ const defaultThreshold = 80
 
 // currentWindow returns the [from, to) days of the budget period that contains
 // today. Periods repeat back to back from start; before start, the first
-// period is current.
-func currentWindow(start time.Time, period string, today time.Time) (time.Time, time.Time) {
-	step := func(t time.Time, n int) time.Time {
-		switch period {
-		case "weekly":
-			return t.AddDate(0, 0, 7*n)
-		case "yearly":
-			return addMonths(start, 12*n)
-		default:
-			// Step from start, not from t, so a 31st start keeps landing on
-			// month ends instead of drifting to the 28th.
-			return addMonths(start, n)
+// period is current. Monthly periods are the user's months, which begin on
+// monthStartDay, so the first one is the month that contains start.
+func currentWindow(start time.Time, period string, today time.Time, monthStartDay int) (time.Time, time.Time) {
+	switch period {
+	case "monthly":
+		from := month.Start(today, monthStartDay)
+		if first := month.Start(start, monthStartDay); from.Before(first) {
+			from = first
 		}
-	}
-	if period == "weekly" {
+		return from, from.AddDate(0, 1, 0)
+	case "weekly":
 		weeks := int(today.Sub(start).Hours() / 24 / 7)
 		if weeks < 0 {
 			weeks = 0
 		}
-		from := step(start, weeks)
-		return from, step(from, 1)
+		from := start.AddDate(0, 0, 7*weeks)
+		return from, from.AddDate(0, 0, 7)
 	}
 
+	// Yearly: step from start, not from the previous period, so a Feb 29
+	// start keeps landing on Feb 29 in leap years.
 	n := 0
 	if today.After(start) {
-		years := today.Year() - start.Year()
-		n = years
-		if period == "monthly" {
-			n = years*12 + int(today.Month()) - int(start.Month())
-		}
-		for n > 0 && step(start, n).After(today) {
+		n = today.Year() - start.Year()
+		for n > 0 && addMonths(start, 12*n).After(today) {
 			n--
 		}
 	}
-	return step(start, n), step(start, n+1)
+	return addMonths(start, 12*n), addMonths(start, 12*(n+1))
 }
 
 // addMonths adds n months, clamping the day to the target month's length

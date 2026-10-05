@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/lib/pq"
@@ -75,7 +76,7 @@ func (r *Repository) List(ctx context.Context, userID string, filter ListFilter)
 		add("t.occurred_at < $%d", filter.ToTime)
 	}
 	if filter.Search != "" {
-		add("t.note ILIKE '%%' || $%d || '%%'", escapeLike(filter.Search))
+		where = append(where, searchCondition(filter, &args))
 	}
 	conditions := " WHERE " + strings.Join(where, " AND ")
 
@@ -113,6 +114,52 @@ func (r *Repository) List(ctx context.Context, userID string, filter ListFilter)
 	return transactions, total, rows.Err()
 }
 
+// searchCondition ORs together every field a search can match: the note,
+// the category or its parent, either account of a transfer, any tag, and the
+// amount by number prefix ("257" matches 257.00, "1,500" matches 1500.00).
+// It scans only the user's rows, already narrowed by the (user_id,
+// occurred_at) index, so substring matching needs no index of its own.
+func searchCondition(filter ListFilter, args *[]interface{}) string {
+	*args = append(*args, escapeLike(filter.Search))
+	text := fmt.Sprintf("'%%' || $%d || '%%'", len(*args))
+	terms := []string{
+		"t.note ILIKE " + text,
+		"c.name ILIKE " + text,
+		"p.name ILIKE " + text,
+		"a.name ILIKE " + text,
+		"ta.name ILIKE " + text,
+		"EXISTS (SELECT 1 FROM unnest(t.tags) AS tag WHERE tag ILIKE " + text + ")",
+	}
+	if prefix, ok := amountPrefix(filter.Search); ok {
+		*args = append(*args, prefix)
+		terms = append(terms, fmt.Sprintf("t.amount::text LIKE $%d || '%%'", len(*args)))
+	}
+	if len(filter.SearchCategories) > 0 {
+		// A matched parent category also matches its subcategories.
+		*args = append(*args, pq.StringArray(filter.SearchCategories))
+		terms = append(terms, fmt.Sprintf("t.category_id = ANY($%[1]d::uuid[]) OR c.parent_id = ANY($%[1]d::uuid[])", len(*args)))
+	}
+	return "(" + strings.Join(terms, " OR ") + ")"
+}
+
+// amountPattern is a number as people type it: digits with optional
+// thousands separators and up to two decimals.
+var amountPattern = regexp.MustCompile(`^[0-9][0-9,]*(\.[0-9]{0,2})?$`)
+
+// amountPrefix turns a typed number into a prefix of amount::text, which
+// always has two decimals ("1500.00"). ok is false for non-numeric input.
+func amountPrefix(search string) (string, bool) {
+	if !amountPattern.MatchString(search) {
+		return "", false
+	}
+	prefix := strings.ReplaceAll(search, ",", "")
+	// Postgres prints no leading zeros, so "0257" should still find 257.00.
+	if trimmed := strings.TrimLeft(prefix, "0"); trimmed != "" && trimmed[0] != '.' {
+		prefix = trimmed
+	}
+	return prefix, true
+}
+
 // escapeLike makes user input match literally inside an ILIKE pattern.
 func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
@@ -140,11 +187,14 @@ var (
 
 // IsClientError reports whether err is one of the validation failures above.
 func IsClientError(err error) bool {
-	var currency *AccountCurrencyError
+	var (
+		currency *AccountCurrencyError
+		shape    *InvalidUpdateError
+	)
 	return errors.Is(err, ErrAccountNotFound) || errors.Is(err, ErrToAccountNotFound) ||
 		errors.Is(err, ErrAccountArchived) || errors.Is(err, ErrCurrencyMismatch) ||
 		errors.Is(err, ErrCategoryNotFound) || errors.Is(err, ErrCategoryType) ||
-		errors.As(err, &currency)
+		errors.As(err, &currency) || errors.As(err, &shape)
 }
 
 // AccountCurrencyError rejects an income/expense whose currency differs from
@@ -183,28 +233,23 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	currency, err := lockAccount(ctx, tx, userID, req.AccountID, ErrAccountNotFound)
+	id, err := CreateInTx(ctx, tx, userID, req)
 	if err != nil {
 		return Transaction{}, err
 	}
-	switch req.Type {
-	case TypeTransfer:
-		toCurrency, err := lockAccount(ctx, tx, userID, req.ToAccountID, ErrToAccountNotFound)
-		if err != nil {
-			return Transaction{}, err
-		}
-		if toCurrency != currency {
-			return Transaction{}, ErrCurrencyMismatch
-		}
-	default:
-		if req.Currency != "" && req.Currency != currency {
-			return Transaction{}, &AccountCurrencyError{Account: currency, Given: req.Currency}
-		}
+	if err := tx.Commit(); err != nil {
+		return Transaction{}, err
 	}
-	if req.CategoryID != "" {
-		if err := checkCategory(ctx, tx, userID, req.CategoryID, req.Type); err != nil {
-			return Transaction{}, err
-		}
+	return r.Get(ctx, userID, id)
+}
+
+// CreateInTx inserts a transaction validated by ValidateCreate inside the
+// caller's database transaction and returns its id. Other packages (such as
+// recurring rules) use it to add transactions atomically with their own rows.
+func CreateInTx(ctx context.Context, tx *sql.Tx, userID string, req CreateRequest) (string, error) {
+	currency, err := CheckReferences(ctx, tx, userID, req)
+	if err != nil {
+		return "", err
 	}
 
 	var id string
@@ -224,20 +269,55 @@ func (r *Repository) Create(ctx context.Context, userID string, req CreateReques
 		req.OccurredAt,
 	).Scan(&id)
 	if err != nil {
-		return Transaction{}, err
+		return "", err
 	}
 	if err := convert(ctx, tx, id); err != nil {
-		return Transaction{}, err
+		return "", err
 	}
-	if err := tx.Commit(); err != nil {
-		return Transaction{}, err
+	return id, nil
+}
+
+// CheckReferences verifies, inside tx, that the accounts and category of req
+// are the user's and usable: accounts open (and share-locked), a transfer's
+// accounts in one currency, an income/expense in its account's currency, and
+// the category matching the type. It returns the transaction's currency.
+func CheckReferences(ctx context.Context, tx *sql.Tx, userID string, req CreateRequest) (string, error) {
+	currency, err := lockAccount(ctx, tx, userID, req.AccountID, ErrAccountNotFound)
+	if err != nil {
+		return "", err
 	}
-	return r.Get(ctx, userID, id)
+	switch req.Type {
+	case TypeTransfer:
+		toCurrency, err := lockAccount(ctx, tx, userID, req.ToAccountID, ErrToAccountNotFound)
+		if err != nil {
+			return "", err
+		}
+		if toCurrency != currency {
+			return "", ErrCurrencyMismatch
+		}
+	default:
+		if req.Currency != "" && req.Currency != currency {
+			return "", &AccountCurrencyError{Account: currency, Given: req.Currency}
+		}
+	}
+	if req.CategoryID != "" {
+		if err := checkCategory(ctx, tx, userID, req.CategoryID, req.Type); err != nil {
+			return "", err
+		}
+	}
+	return currency, nil
 }
 
 // lockAccount share-locks an account the user owns and returns its currency.
 // notFound is returned when the user has no such account.
 func lockAccount(ctx context.Context, tx *sql.Tx, userID, accountID string, notFound error) (string, error) {
+	return lockAccountUnlessKnown(ctx, tx, userID, accountID, notFound, false)
+}
+
+// lockAccountUnlessKnown is lockAccount, except that an archived account is
+// accepted when known is set: an edit may keep a transaction on the archived
+// account it already uses, but not move one onto it.
+func lockAccountUnlessKnown(ctx context.Context, tx *sql.Tx, userID, accountID string, notFound error, known bool) (string, error) {
 	var (
 		currency string
 		archived bool
@@ -250,7 +330,7 @@ func lockAccount(ctx context.Context, tx *sql.Tx, userID, accountID string, notF
 		return "", notFound
 	case err != nil:
 		return "", err
-	case archived:
+	case archived && !known:
 		return "", ErrAccountArchived
 	}
 	return currency, nil
@@ -283,6 +363,11 @@ func convert(ctx context.Context, tx *sql.Tx, id string) error {
 
 // Update applies the non-nil fields of req to the transaction existing (as
 // loaded by Get), returning ErrNotFound when it disappeared meanwhile.
+//
+// The row is locked and re-read first, so the type and account checks apply
+// to its current state even when two edits race. Balances are derived from
+// the transaction rows, so moving a transaction between accounts or changing
+// its type keeps every balance exact as long as the row itself is valid.
 func (r *Repository) Update(ctx context.Context, userID string, existing Transaction, req UpdateRequest) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -290,31 +375,60 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Transac
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	newType := existing.Type
-	if req.Type != nil {
-		newType = *req.Type
+	var current shape
+	err = tx.QueryRowContext(ctx, `
+		SELECT type, account_id, COALESCE(to_account_id::text, ''), COALESCE(category_id::text, '')
+		FROM transactions WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+		FOR UPDATE
+	`, existing.ID, userID).Scan(&current.Type, &current.AccountID, &current.ToAccountID, &current.CategoryID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
 	}
-	// A new category, or a type change that keeps the old category, must
-	// still pair a category with a transaction of the same type.
-	categoryID := ""
-	if existing.Category != nil {
-		categoryID = existing.Category.ID
+	if err != nil {
+		return err
 	}
-	if req.CategoryID != nil {
-		categoryID = *req.CategoryID
-	}
-	if categoryID != "" && (req.CategoryID != nil || req.Type != nil) {
-		if err := checkCategory(ctx, tx, userID, categoryID, newType); err != nil {
-			return err
-		}
+	next, err := nextShape(current, req)
+	if err != nil {
+		return err
 	}
 
 	update := database.NewUpdate("transactions")
-	if req.CategoryID != nil {
-		update.Set("category_id", database.NullIfEmpty(*req.CategoryID))
+	if next.AccountID != current.AccountID || next.ToAccountID != current.ToAccountID {
+		// Accounts the transaction already uses may be archived; new ones
+		// may not. Either way the user must own them.
+		known := func(id string) bool { return id == current.AccountID || id == current.ToAccountID }
+		currency, err := lockAccountUnlessKnown(ctx, tx, userID, next.AccountID, ErrAccountNotFound, known(next.AccountID))
+		if err != nil {
+			return err
+		}
+		if next.ToAccountID != "" {
+			toCurrency, err := lockAccountUnlessKnown(ctx, tx, userID, next.ToAccountID, ErrToAccountNotFound, known(next.ToAccountID))
+			if err != nil {
+				return err
+			}
+			if toCurrency != currency {
+				return ErrCurrencyMismatch
+			}
+		}
+		// An account holds one currency, so the amount is in the (new)
+		// sending account's currency.
+		update.Set("account_id", next.AccountID)
+		update.Set("to_account_id", database.NullIfEmpty(next.ToAccountID))
+		update.Set("currency", currency)
 	}
-	if req.Type != nil {
-		update.Set("type", *req.Type)
+
+	// A new category, or a type change that keeps the old category, must
+	// still pair a category with a transaction of the same type.
+	if next.CategoryID != "" && (req.CategoryID != nil || next.Type != current.Type) {
+		if err := checkCategory(ctx, tx, userID, next.CategoryID, next.Type); err != nil {
+			return err
+		}
+	}
+	if next.CategoryID != current.CategoryID {
+		update.Set("category_id", database.NullIfEmpty(next.CategoryID))
+	}
+	if next.Type != current.Type {
+		update.Set("type", next.Type)
 	}
 	if req.Amount != nil {
 		update.Set("amount", string(*req.Amount))

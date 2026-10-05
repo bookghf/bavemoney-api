@@ -8,11 +8,9 @@ import (
 	"ledger-api/internal/database"
 )
 
-// columns includes current_balance: initial balance plus income, minus
-// expense, minus transfers out, plus transfers in, across the account's live
-// transactions. Money is read as text so it reaches clients exactly.
-const columns = `id, name, type, currency, initial_balance::text,
-	(initial_balance + COALESCE((
+// activity is the net effect of an account's live transactions: income,
+// minus expense, minus transfers out, plus transfers in.
+const activity = `COALESCE((
 		SELECT SUM(CASE
 			WHEN t.to_account_id = accounts.id THEN t.amount
 			WHEN t.type = 'income' THEN t.amount
@@ -21,7 +19,12 @@ const columns = `id, name, type, currency, initial_balance::text,
 		END)
 		FROM transactions t
 		WHERE (t.account_id = accounts.id OR t.to_account_id = accounts.id) AND t.deleted_at IS NULL
-	), 0))::text AS current_balance,
+	), 0)`
+
+// columns includes current_balance, the initial balance plus activity. Money
+// is read as text so it reaches clients exactly.
+const columns = `id, name, type, currency, color, initial_balance::text,
+	(initial_balance + ` + activity + `)::text AS current_balance,
 	is_archived, created_at`
 
 // Errors surfaced to the caller.
@@ -83,11 +86,11 @@ func (r *Repository) Get(ctx context.Context, userID, id string) (Account, error
 func (r *Repository) Create(ctx context.Context, userID string, req CreateRequest) (Account, error) {
 	var id string
 	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO accounts (user_id, name, type, currency, initial_balance)
-		SELECT $1, $2, $3, c.code, $5::numeric
+		INSERT INTO accounts (user_id, name, type, currency, initial_balance, color)
+		SELECT $1, $2, $3, c.code, $5::numeric, $6
 		FROM currencies c WHERE c.code = $4 AND c.is_active
 		RETURNING id
-	`, userID, req.Name, req.Type, req.Currency, string(req.InitialBalance)).Scan(&id)
+	`, userID, req.Name, req.Type, req.Currency, string(req.InitialBalance), database.NullIfEmpty(req.Color)).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Account{}, ErrUnknownCurrency
 	}
@@ -131,6 +134,9 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Account
 		}
 		update.Set("currency", *req.Currency)
 	}
+	if req.Color != nil {
+		update.Set("color", database.NullIfEmpty(*req.Color))
+	}
 	if req.InitialBalance != nil {
 		update.Set("initial_balance", string(*req.InitialBalance))
 	}
@@ -148,6 +154,47 @@ func (r *Repository) Update(ctx context.Context, userID string, existing Account
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+// Reconcile makes the account's current balance equal target by moving its
+// opening balance: initial = target - (current - initial). No transaction is
+// added, so reports gain no made-up income or expense.
+//
+// The account row is locked FOR UPDATE before the sum is read. Creating or
+// importing a transaction share-locks the account first, so those inserts
+// either commit before the sum (and are counted) or wait until the new opening
+// balance is in place. The opening balance may come out negative even on a
+// cash or bank account; that only means the recorded history overstates what
+// came in, and the balance the user sees is still the real one.
+func (r *Repository) Reconcile(ctx context.Context, userID, id string, target string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var locked string
+	err = tx.QueryRowContext(ctx, `
+		SELECT id FROM accounts WHERE id = $1 AND user_id = $2 FOR UPDATE
+	`, id, userID).Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	// A separate statement, so under READ COMMITTED it sees every
+	// transaction committed before the lock was granted.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE accounts SET
+			initial_balance = $3::numeric - `+activity+`,
+			updated_at = now()
+		WHERE id = $1 AND user_id = $2
+	`, id, userID, target); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
@@ -174,7 +221,11 @@ type scanner interface {
 }
 
 func scan(src scanner) (Account, error) {
-	var a Account
-	err := src.Scan(&a.ID, &a.Name, &a.Type, &a.Currency, &a.InitialBalance, &a.CurrentBalance, &a.IsArchived, &a.CreatedAt)
+	var (
+		a     Account
+		color sql.NullString
+	)
+	err := src.Scan(&a.ID, &a.Name, &a.Type, &a.Currency, &color, &a.InitialBalance, &a.CurrentBalance, &a.IsArchived, &a.CreatedAt)
+	a.Color = color.String
 	return a, err
 }

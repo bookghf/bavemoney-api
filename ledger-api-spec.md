@@ -278,6 +278,7 @@ Create a new account.
 | type | string | yes | One of: `cash`, `bank`, `credit_card`, `e_wallet` |
 | currency | string | yes | ISO 4217 code, must exist in `currencies` table and be active |
 | initial_balance | string | no | Decimal string. Defaults to `"0.00"` |
+| color | string | no | Palette key: `orange`, `amber`, `lime`, `cyan`, `indigo`, `violet`, `fuchsia`, `pink`, `brown`, `slate`. Omitted means the app picks a default for the type; accounts without one return no `color` field |
 
 **Response: `201 Created`**
 
@@ -315,11 +316,39 @@ Update an account's name, type, or archive status.
 |-------|------|-------|
 | name | string | Max 100 chars |
 | type | string | `cash`, `bank`, `credit_card`, `e_wallet` |
+| color | string | Palette key as on create; `""` clears it |
 | is_archived | boolean | Archiving hides the account from the default list but preserves history |
 
 **Response: `200 OK`** — returns the updated account object (same shape as POST response).
 
 **Errors:** `404` if account doesn't belong to user.
+
+---
+
+### POST /accounts/:id/reconcile
+
+Set the account's current balance to what the bank or wallet really shows,
+by moving its opening balance: `initial_balance = balance - (current_balance - initial_balance)`.
+No transaction is created, so reports are unchanged. Runs in one database
+transaction that locks the account, so a transaction being added at the same
+time is either counted or applied on top of the new balance.
+
+**Request body:**
+
+```json
+{ "balance": "1234.56" }
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| balance | string | yes | Decimal, at most 2 places. Negative only for `credit_card` (amount owed) |
+
+The resulting `initial_balance` may be negative on any account type: it just
+means the recorded history overstates what came in.
+
+**Response: `200 OK`** — `{ "account": { ... } }` with the new balances.
+
+**Errors:** `400` for an invalid balance, `404` if the account doesn't belong to the user.
 
 ---
 
@@ -341,7 +370,8 @@ List transactions for the authenticated user with filtering and pagination.
 | tags | string | — | Comma-separated. Returns transactions matching *any* of the given tags |
 | from | date | — | Inclusive start date (`YYYY-MM-DD`) |
 | to | date | — | Inclusive end date (`YYYY-MM-DD`) |
-| search | string | — | Full-text search on `note` field |
+| search | string | — | Case-insensitive substring match on the note, category (or its parent) name, account name (either side of a transfer), and tags; a number such as `257` or `1,500` also matches amounts by prefix (`257.00`, `1500.00`). Alias `q`. Max 100 characters |
+| search_categories | string | — | Comma-separated category IDs (max 100) that also count as a search match, e.g. ones the client matched by a translated name. A parent includes its subcategories. Ignored without `search` |
 | sort | string | `-occurred_at` | Prefix `-` for descending. Allowed fields: `occurred_at`, `amount`, `created_at` |
 
 **Response: `200 OK`**
@@ -446,12 +476,21 @@ Update an existing transaction. Only the provided fields are changed.
 
 | Field | Type | Notes |
 |-------|------|-------|
-| category_id | uuid | |
+| account_id | uuid | Moves the transaction (a transfer's sending side). The transaction takes that account's currency. |
+| to_account_id | uuid | A transfer's receiving account. Required when changing `type` to `transfer`; must be empty (or omitted) otherwise. |
+| category_id | uuid | `""` clears it. Must match the resulting type; transfers can not have one. |
 | type | string | `income`, `expense`, `transfer` |
 | amount | string | Positive decimal |
 | note | string | Max 500 chars |
 | tags | string[] | Replaces the entire tags array |
 | occurred_at | datetime | |
+
+Type and account changes:
+- Income and expense switch freely; send a `category_id` of the new type (or `""`), since a category of the old type is rejected.
+- Converting to a transfer needs `to_account_id` (an open account of the same currency, not the sending account) and drops the category.
+- Converting a transfer to income or expense drops `to_account_id`.
+- A newly used account must belong to the user and must not be archived; an archived account the transaction already uses may stay.
+- Balances are derived from the transaction rows, so they follow every change exactly.
 
 **Response: `200 OK`** — returns the updated transaction object.
 
@@ -664,7 +703,7 @@ Create a new budget.
 | currency | string | yes | ISO 4217 |
 | period | string | yes | `weekly`, `monthly`, or `yearly` |
 | start_date | date | yes | `YYYY-MM-DD`. Budget period starts from this date |
-| alert_threshold_pct | int | no | 1–100. Defaults to `80`. Triggers push notification when spend crosses this % |
+| alert_threshold_pct | int | no | 1–100. Defaults to `80`. The app shows a warning on Home once spend crosses this % (no push notification) |
 
 **Response: `201 Created`** — returns the budget object (same shape as in the list, with `current_spend`, `remaining`, and `percent_used` computed as of now).
 
@@ -710,6 +749,110 @@ Permanently delete a budget.
 
 ---
 
+## Recurring
+
+Rules that create transactions on a schedule. The API runs due rules at startup, every 15 minutes, and right after a rule is saved. Each due date becomes one transaction dated 00:00 in the rule's `time_zone`, tagged `recurring:<rule id>`. Missed dates are caught up (at most a year back). A rule is never run twice for the same date, even with several API instances.
+
+### GET /recurring
+
+List the user's rules, active first, then by `next_run_on`.
+
+**Response: `200 OK`**: `{"rules": [ <rule>, ... ]}`
+
+### POST /recurring
+
+Create a rule.
+
+**Request body:**
+
+```json
+{
+  "type": "expense",
+  "account_id": "110761df-...",
+  "category_id": "6192bbb9-...",
+  "amount": "7300.00",
+  "note": "rental fee",
+  "frequency": "monthly",
+  "day_of_month": 25,
+  "start_date": "2026-10-25",
+  "end_date": "2027-09-25",
+  "time_zone": "Asia/Bangkok"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| type | string | yes | `income`, `expense`, or `transfer` |
+| account_id | uuid | yes | An open account of the user |
+| to_account_id | uuid | transfers | Required for transfers; a different open account in the same currency |
+| category_id | uuid | no | Must match `type`; not allowed on transfers |
+| amount | string | yes | Positive decimal, at most 2 places |
+| currency | string | no | Defaults to the account's currency |
+| note | string | no | |
+| frequency | string | yes | `monthly` or `weekly` |
+| day_of_month | int | monthly | 1–31. Days past the end of a month run on its last day (31 → 30 Apr, 28 Feb) |
+| weekday | int | weekly | 0 = Sunday … 6 = Saturday |
+| start_date | date | yes | `YYYY-MM-DD`, at most one year in the past |
+| end_date | date | no | On or after `start_date`; empty or omitted for no end |
+| time_zone | string | no | IANA name; defaults to `UTC`. Decides which local day is "today" |
+| is_active | bool | no | Defaults to `true` |
+
+**Response: `201 Created`**
+
+```json
+{
+  "rule": {
+    "id": "25cb535a-...",
+    "type": "expense",
+    "account_id": "110761df-...",
+    "account_name": "Main",
+    "category": { "id": "6192bbb9-...", "name": "Housing", "icon": "key", "color": "slate" },
+    "amount": "7300.00",
+    "currency": "THB",
+    "note": "rental fee",
+    "frequency": "monthly",
+    "day_of_month": 25,
+    "weekday": null,
+    "start_date": "2026-10-25",
+    "end_date": "2027-09-25",
+    "next_run_on": "2026-10-25",
+    "last_run_on": null,
+    "time_zone": "Asia/Bangkok",
+    "is_active": true,
+    "pause_reason": null,
+    "created_at": "2026-10-05T09:07:44.928843Z",
+    "updated_at": "2026-10-05T09:07:44.928843Z"
+  }
+}
+```
+
+Transfers also return `to_account_id` and `to_account_name`. `next_run_on` is `null` once the rule is past its `end_date`. `pause_reason` is `account_archived` or `invalid` when the runner paused the rule because a transaction could no longer be created; the rule stays paused until it is edited and resumed.
+
+### GET /recurring/:id
+
+**Response: `200 OK`**: `{"rule": <rule>}`. `404` for another user's rule.
+
+### PATCH /recurring/:id
+
+Any subset of the POST fields. The result is validated as a whole rule. An empty string clears `to_account_id`, `category_id`, `note`, or `end_date`. `is_active` pauses or resumes; resuming does not back-fill the paused dates. Changing the schedule never re-runs a date that already ran.
+
+**Response: `200 OK`**: `{"rule": <rule>}`
+
+### DELETE /recurring/:id
+
+Deletes the rule. Transactions it already created stay.
+
+**Response: `200 OK`**
+
+```json
+{
+  "message": "Recurring rule deleted",
+  "id": "25cb535a-..."
+}
+```
+
+---
+
 ## Reports
 
 ### GET /reports/summary
@@ -721,7 +864,7 @@ Aggregated spending and income summary for a given period.
 | Param | Type | Required | Notes |
 |-------|------|----------|-------|
 | period | string | yes | `day`, `week` (Sunday–Saturday), `month`, `year`, or `custom` |
-| date | string | unless custom | A date within the desired period. For `day`/`week`: `2026-08-12`. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026` |
+| date | string | unless custom | A date within the desired period. For `day`/`week`: `2026-08-12`. For `month`: `2026-08` or `2026-08-01`. For `year`: `2026`. Months begin on the user's `month_start_day` (1–28, set with PATCH /me): a full date picks the month containing it (day 25, `2026-10-05` → 2026-09-25..2026-10-24) and `YYYY-MM` the month that starts in it. Monthly budgets follow the same months |
 | from, to | string | custom only | Inclusive `YYYY-MM-DD` bounds; `to` ≥ `from`, at most 731 days |
 | account_id | uuid | no | Filter to a specific account |
 | category_id | uuid | no | Filter to one category. A top-level category includes its subcategories; a subcategory matches only itself |

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"ledger-api/internal/month"
 	"ledger-api/internal/validate"
 
 	// Embedded zone data so tz validation works on images without tzdata.
@@ -39,6 +40,13 @@ const dateLayout = "2006-01-02"
 // returns one daily_breakdown row per day in the range (zero days included).
 // Transfers move money between the user's own accounts and are left out.
 func (r *Repository) GetSummary(ctx context.Context, userID string, filter SummaryFilter) (SummaryResponse, error) {
+	// The user's own currency is the default, and their month_start_day
+	// decides what a month covers.
+	var defaultCurrency string
+	if err := r.db.QueryRowContext(ctx, `SELECT default_currency, month_start_day FROM users WHERE id = $1`, userID).
+		Scan(&defaultCurrency, &filter.MonthStartDay); err != nil {
+		return SummaryResponse{}, err
+	}
 	filter, start, end, err := normalize(filter)
 	if err != nil {
 		return SummaryResponse{}, err
@@ -56,10 +64,7 @@ func (r *Repository) GetSummary(ctx context.Context, userID string, filter Summa
 	}
 
 	if summary.Currency == "" {
-		// Default to the user's own currency rather than a fixed one.
-		if err := r.db.QueryRowContext(ctx, `SELECT default_currency FROM users WHERE id = $1`, userID).Scan(&summary.Currency); err != nil {
-			return SummaryResponse{}, err
-		}
+		summary.Currency = defaultCurrency
 	}
 
 	// tx is the filtered set every query below aggregates. $2 is the time
@@ -316,7 +321,9 @@ func normalize(filter SummaryFilter) (SummaryFilter, time.Time, time.Time, error
 
 // periodRange returns the first and last day of the filter's period. For
 // day/week/month/year, date may be YYYY-MM-DD; month also takes YYYY-MM and
-// year YYYY. Weeks start on Sunday. A custom period uses from and to.
+// year YYYY. Weeks start on Sunday. Months start on MonthStartDay: a date
+// picks the month containing it, YYYY-MM the month that starts in it. A
+// custom period uses from and to.
 func periodRange(filter SummaryFilter) (time.Time, time.Time, error) {
 	if filter.Period == PeriodCustom {
 		start, errFrom := time.Parse(dateLayout, filter.From)
@@ -345,10 +352,11 @@ func periodRange(filter SummaryFilter) (time.Time, time.Time, error) {
 	}
 
 	var (
-		t   time.Time
-		err error
+		t      time.Time
+		err    error
+		layout string
 	)
-	for _, layout := range layouts {
+	for _, layout = range layouts {
 		if t, err = time.Parse(layout, filter.Date); err == nil {
 			break
 		}
@@ -364,8 +372,12 @@ func periodRange(filter SummaryFilter) (time.Time, time.Time, error) {
 		start := t.AddDate(0, 0, -int(t.Weekday()))
 		return start, start.AddDate(0, 0, 6), nil
 	case PeriodMonth:
-		start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
-		return start, start.AddDate(0, 1, -1), nil
+		if layout != dateLayout && month.ValidStartDay(filter.MonthStartDay) {
+			// YYYY-MM parses to the 1st; name the month starting in it.
+			t = t.AddDate(0, 0, filter.MonthStartDay-1)
+		}
+		start, end := month.Range(t, filter.MonthStartDay)
+		return start, end, nil
 	default:
 		start := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		return start, time.Date(t.Year(), 12, 31, 0, 0, 0, 0, time.UTC), nil

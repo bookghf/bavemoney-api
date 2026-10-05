@@ -693,6 +693,145 @@
       ]
     },
     {
+      "name": "Recurring",
+      "item": [
+        {
+          "name": "List Recurring Rules",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/recurring",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recurring"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Recurring Rule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/recurring",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recurring"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"type\": \"expense\", \"account_id\": \"{{account_id}}\", \"category_id\": \"{{category_id}}\", \"amount\": \"7300.00\", \"note\": \"rental fee\", \"frequency\": \"monthly\", \"day_of_month\": 25, \"start_date\": \"2026-10-25\", \"time_zone\": \"Asia/Bangkok\"}"
+            }
+          }
+        },
+        {
+          "name": "Get Recurring Rule",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/recurring/{{recurring_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recurring",
+                "{{recurring_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Pause Recurring Rule",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/recurring/{{recurring_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recurring",
+                "{{recurring_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"is_active\": false}"
+            }
+          }
+        },
+        {
+          "name": "Delete Recurring Rule",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/recurring/{{recurring_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "recurring",
+                "{{recurring_id}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Reports",
       "item": [
         {
@@ -1448,6 +1587,11 @@
     {
       "key": "currency_code",
       "value": "USD",
+      "type": "string"
+    },
+    {
+      "key": "recurring_id",
+      "value": "",
       "type": "string"
     }
   ]

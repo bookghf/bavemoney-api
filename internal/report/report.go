@@ -1,7 +1,8 @@
 package report
 
 // Report periods. A custom period covers From..To; the others cover the
-// day, week (Sunday to Saturday), month, or year containing Date.
+// day, week (Sunday to Saturday), month, or year containing Date. Months
+// begin on the user's month_start_day (calendar months when it is 1).
 const (
 	PeriodDay    = "day"
 	PeriodWeek   = "week"
@@ -30,6 +31,9 @@ type SummaryFilter struct {
 	// TimeZone is the IANA zone used to decide which calendar day a
 	// transaction falls on. Defaults to UTC.
 	TimeZone string
+	// MonthStartDay is the day (1-28) the user's month begins on. It comes
+	// from the user's profile, not the query.
+	MonthStartDay int
 }
 
 type CategorySummary struct {

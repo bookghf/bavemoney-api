@@ -7,8 +7,11 @@ type User struct {
 	Email           string `json:"email"`
 	DisplayName     string `json:"display_name"`
 	DefaultCurrency string `json:"default_currency"`
-	Status          string `json:"status"`
-	CreatedAt       string `json:"created_at"`
+	// MonthStartDay (1-28) is the day the user's month begins on, e.g. 25
+	// for someone paid on the 25th. Monthly reports and budgets follow it.
+	MonthStartDay int    `json:"month_start_day"`
+	Status        string `json:"status"`
+	CreatedAt     string `json:"created_at"`
 }
 
 // Credentials is the payload accepted by both register and login.
@@ -46,6 +49,7 @@ type AuthResponse struct {
 type UpdateProfileRequest struct {
 	DisplayName     *string `json:"display_name"`
 	DefaultCurrency *string `json:"default_currency"`
+	MonthStartDay   *int    `json:"month_start_day"`
 }
 
 // ChangePasswordRequest is the POST /me/password payload.

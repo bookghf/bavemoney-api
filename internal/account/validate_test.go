@@ -45,3 +45,36 @@ func TestCheckUpdateRevalidatesBalanceAgainstNewType(t *testing.T) {
 		t.Errorf("cash with zero balance: %v", err)
 	}
 }
+
+func TestCheckReconcile(t *testing.T) {
+	bank := Account{Type: "bank"}
+	card := Account{Type: "credit_card"}
+	for _, ok := range []struct {
+		account Account
+		balance validate.Decimal
+	}{{bank, "1234.56"}, {bank, "0"}, {bank, "-0.00"}, {card, "-1500.50"}} {
+		if err := checkReconcile(ok.account, ReconcileRequest{Balance: ok.balance}); err != nil {
+			t.Errorf("%s %s rejected: %v", ok.account.Type, ok.balance, err)
+		}
+	}
+	for _, balance := range []validate.Decimal{"", "1.001", "1e5", "-10", "abc"} {
+		if err := checkReconcile(bank, ReconcileRequest{Balance: balance}); err == nil {
+			t.Errorf("bank %q: want error", balance)
+		}
+	}
+}
+
+func TestColor(t *testing.T) {
+	req := CreateRequest{Name: "x", Type: "cash", Currency: "THB", Color: " lime "}
+	if err := normalizeCreate(&req); err != nil || req.Color != "lime" {
+		t.Errorf("lime: color %q, err %v", req.Color, err)
+	}
+	bad := CreateRequest{Name: "x", Type: "cash", Currency: "THB", Color: "teal"}
+	if err := normalizeCreate(&bad); err == nil {
+		t.Error("teal: want error")
+	}
+	empty := ""
+	if err := checkUpdate(Account{Type: "cash"}, &UpdateRequest{Color: &empty}); err != nil {
+		t.Errorf("clearing the color: %v", err)
+	}
+}
