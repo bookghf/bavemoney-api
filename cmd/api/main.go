@@ -15,6 +15,7 @@ import (
 	"ledger-api/internal/config"
 	"ledger-api/internal/database"
 	"ledger-api/internal/migrate"
+	"ledger-api/internal/recurring"
 	"ledger-api/internal/server"
 )
 
@@ -43,6 +44,15 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
+	// Create due recurring transactions now and then on a ticker. Each rule
+	// is locked while it runs, so several instances can run this safely.
+	runCtx, stopRunner := context.WithCancel(context.Background())
+	runnerDone := make(chan struct{})
+	go func() {
+		defer close(runnerDone)
+		recurring.NewRepository(db).Run(runCtx, recurring.RunInterval)
+	}()
+
 	srv := server.New(cfg, db)
 	go func() {
 		slog.Info("listening", "addr", srv.Addr, "env", cfg.Env)
@@ -60,5 +70,11 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("shutdown", "error", err)
+	}
+	// Cancelling rolls back a rule mid-run; it is redone on the next start.
+	stopRunner()
+	select {
+	case <-runnerDone:
+	case <-ctx.Done():
 	}
 }
