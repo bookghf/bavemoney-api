@@ -17,6 +17,8 @@ const (
 type CategoryInfo struct {
 	ID     string        `json:"id"`
 	Name   string        `json:"name"`
+	Icon   string        `json:"icon,omitempty"`
+	Color  string        `json:"color,omitempty"`
 	Parent *CategoryInfo `json:"parent,omitempty"`
 }
 

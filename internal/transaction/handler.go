@@ -38,6 +38,9 @@ func NewHandler(repo *Repository, authenticator *auth.Authenticator) *Handler {
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc(basePath, h.collection)
 	mux.HandleFunc(basePath+"/", h.item)
+	// More specific than basePath+"/", so these win over the {id} routes.
+	mux.HandleFunc(basePath+"/import", h.importRows)
+	mux.HandleFunc(basePath+"/export", h.export)
 }
 
 func (h *Handler) collection(w http.ResponseWriter, r *http.Request) {

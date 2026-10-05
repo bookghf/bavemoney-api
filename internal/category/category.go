@@ -1,6 +1,11 @@
 // Package category owns the two-level income/expense category tree.
 package category
 
+import (
+	"errors"
+	"regexp"
+)
+
 // Category is the API representation of a category. Children is populated only
 // when the category is returned as part of a tree.
 type Category struct {
@@ -80,4 +85,24 @@ func BuildTree(flat []Category) []Category {
 		}
 	}
 	return roots
+}
+
+// Colors are palette keys the app maps to light and dark shades.
+var colors = map[string]bool{
+	"orange": true, "amber": true, "lime": true, "cyan": true, "indigo": true,
+	"violet": true, "fuchsia": true, "pink": true, "brown": true, "slate": true,
+}
+
+// iconPattern matches Ionicons glyph names such as "fast-food" or "game-controller".
+var iconPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// checkLook validates an optional icon and color.
+func checkLook(icon, color string) error {
+	if icon != "" && (len(icon) > 40 || !iconPattern.MatchString(icon)) {
+		return errors.New("icon must be an icon name such as fast-food")
+	}
+	if color != "" && !colors[color] {
+		return errors.New("color must be one of orange, amber, lime, cyan, indigo, violet, fuchsia, pink, brown, slate")
+	}
+	return nil
 }

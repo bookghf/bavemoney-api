@@ -7,8 +7,10 @@ import "ledger-api/internal/validate"
 var periods = map[string]bool{"weekly": true, "monthly": true, "yearly": true}
 
 type CategoryInfo struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
 }
 
 // Budget is the API representation of a budget, with its progress through the
